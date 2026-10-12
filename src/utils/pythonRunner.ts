@@ -155,21 +155,33 @@ function mapProcessStartError(err: Error, pythonCommand: string): SfError {
   );
 }
 
+/** Options for {@link runPythonProgram}: everything but the program itself is shared with `run`. */
+export type PythonProgramOptions = {
+  pythonCommand: string;
+  /** Interpreter arguments, e.g. `['-c', SHIM, payloadJson]`. */
+  args: readonly string[];
+  /** SF CLI org username/alias, named in the authentication-failure message. */
+  sfCliOrg?: string;
+  timeoutMs?: number;
+  onStdout?: (chunk: string) => void;
+  onStderr?: (chunk: string) => void;
+  /** Checked before the default failure mapping; return undefined to fall through to it. */
+  mapExitCode?: (exitCode: number, stderr: string) => SfError | undefined;
+};
+
 /**
- * Run a package's entrypoint through the SDK's `run_entrypoint`, streaming output
- * live. Resolves with the accumulated stdout/stderr on a clean exit; rejects with a
- * friendly {@link SfError} on non-zero exit or a failure to start the interpreter.
+ * Spawn the interpreter with `opts.args`, streaming output live. Resolves with the
+ * accumulated stdout/stderr on a clean exit; rejects with a friendly {@link SfError}
+ * on non-zero exit or a failure to start the interpreter.
  */
-export async function runEntrypoint(
-  opts: PythonRunOptions,
+export async function runPythonProgram(
+  opts: PythonProgramOptions,
   deps: PythonRunnerDeps = { spawn: defaultSpawn }
 ): Promise<PythonRunResult> {
-  const payload = buildRunPayload(opts);
-  const args = ['-c', RUN_ENTRYPOINT_SHIM, JSON.stringify(payload)];
-  debug('run spawn: %s %o', opts.pythonCommand, args);
+  debug('run spawn: %s %o', opts.pythonCommand, opts.args);
 
   return new Promise<PythonRunResult>((resolve, reject) => {
-    const child = deps.spawn(opts.pythonCommand, args, {
+    const child = deps.spawn(opts.pythonCommand, opts.args, {
       timeout: opts.timeoutMs ?? RUN_TIMEOUT_MS,
       // PYTHONUNBUFFERED so the entrypoint's prints stream immediately instead of buffering.
       env: { ...process.env, PYTHONUNBUFFERED: '1' },
@@ -200,10 +212,34 @@ export async function runEntrypoint(
       if (exitCode === 0) {
         resolve({ stdout: stdout.trim(), stderr: stderr.trim(), exitCode });
       } else {
-        reject(mapRunFailure(exitCode, stderr.trim(), opts.sfCliOrg));
+        const trimmed = stderr.trim();
+        reject(opts.mapExitCode?.(exitCode, trimmed) ?? mapRunFailure(exitCode, trimmed, opts.sfCliOrg));
       }
     });
   });
+}
+
+/**
+ * Run a package's entrypoint through the SDK's `run_entrypoint`, streaming output
+ * live. Resolves with the accumulated stdout/stderr on a clean exit; rejects with a
+ * friendly {@link SfError} on non-zero exit or a failure to start the interpreter.
+ */
+export async function runEntrypoint(
+  opts: PythonRunOptions,
+  deps: PythonRunnerDeps = { spawn: defaultSpawn }
+): Promise<PythonRunResult> {
+  const payload = buildRunPayload(opts);
+  return runPythonProgram(
+    {
+      pythonCommand: opts.pythonCommand,
+      args: ['-c', RUN_ENTRYPOINT_SHIM, JSON.stringify(payload)],
+      sfCliOrg: opts.sfCliOrg,
+      timeoutMs: opts.timeoutMs,
+      onStdout: opts.onStdout,
+      onStderr: opts.onStderr,
+    },
+    deps
+  );
 }
 
 /**

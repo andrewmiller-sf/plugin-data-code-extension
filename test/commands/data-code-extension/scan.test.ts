@@ -18,7 +18,9 @@ import * as path from 'node:path';
 import * as os from 'node:os';
 import { TestContext } from '@salesforce/core/testSetup';
 import { expect } from 'chai';
-import { stubSfCommandUx } from '@salesforce/sf-plugins-core';
+import { SfCommand, stubSfCommandUx } from '@salesforce/sf-plugins-core';
+import { SfError } from '@salesforce/core';
+import * as sinon from 'sinon';
 import { setPipreqsMock } from '../../../src/utils/nativeScan.js';
 import { PythonChecker } from '../../../src/utils/pythonChecker.js';
 import { PipChecker } from '../../../src/utils/pipChecker.js';
@@ -252,6 +254,109 @@ describe('data-code-extension scan commands', () => {
         .split('\n')
         .filter((l) => l.trim().length > 0);
       expect(reqs).to.deep.equal(['pandas']);
+    });
+  });
+
+  describe('script scan stale-lineage guard', () => {
+    const SCRIPT =
+      'from datacustomcode.client import Client\n' +
+      'def main():\n' +
+      '    c = Client()\n' +
+      '    c.read_dlo("Source__dll")\n' +
+      '    c.write_to_dlo("Dest__dll", df)\n';
+    const STALE = [{ targetField: 'OldDest__dll.a', sourceFields: ['Source__dll.a'] }];
+    let confirmStub: sinon.SinonStub;
+    let originalIsTTY: boolean | undefined;
+
+    const configFile = (): string => path.join(testDir, 'payload', 'config.json');
+    const readConfig = (): Record<string, unknown> =>
+      JSON.parse(fs.readFileSync(configFile(), 'utf8')) as Record<string, unknown>;
+    const warnings = (): string[] => sfCommandStubs.warn.getCalls().map((call) => String(call.args[0]));
+
+    beforeEach(() => {
+      confirmStub = $$.SANDBOX.stub(SfCommand.prototype, 'confirm').resolves(true);
+      originalIsTTY = process.stdin.isTTY;
+      process.stdin.isTTY = true;
+    });
+
+    afterEach(() => {
+      process.stdin.isTTY = originalIsTTY as boolean;
+    });
+
+    it('is unchanged without dataLineage: same config.json bytes, no prompt, no warning', async () => {
+      makeScriptPackage(SCRIPT);
+      await ScriptScan.run([]);
+      expect(fs.readFileSync(configFile(), 'utf8')).to.equal(
+        JSON.stringify(
+          {
+            dataspace: 'default',
+            entryPoint: 'entrypoint.py',
+            permissions: { read: { dlo: ['Source__dll'] }, write: { dlo: ['Dest__dll'] } },
+          },
+          null,
+          2
+        )
+      );
+      expect(confirmStub.called).to.be.false;
+      expect(sfCommandStubs.warn.called).to.be.false;
+    });
+
+    it('does not prompt when lineage is still covered by permissions', async () => {
+      const lineage = [{ targetField: 'Dest__dll.a', sourceFields: ['Source__dll.a'] }];
+      makeScriptPackage(SCRIPT, { dataspace: 'default', dataLineage: lineage });
+      await ScriptScan.run([]);
+      expect(confirmStub.called).to.be.false;
+      expect(readConfig().dataLineage).to.deep.equal(lineage);
+    });
+
+    it('writes permissions and leaves lineage untouched when confirmed', async () => {
+      makeScriptPackage(SCRIPT, { dataspace: 'default', dataLineage: STALE });
+      const result = await ScriptScan.run([]);
+      expect(confirmStub.calledOnce).to.be.true;
+      expect(confirmStub.firstCall.args[0]).to.have.property('defaultAnswer', false);
+      expect(warnings().some((w) => w.includes('write: OldDest__dll') && w.includes('1 entries'))).to.be.true;
+      expect(result.executionResult.written).to.be.undefined;
+      const config = readConfig();
+      expect(config.permissions).to.deep.equal({ read: { dlo: ['Source__dll'] }, write: { dlo: ['Dest__dll'] } });
+      expect(config.dataLineage).to.deep.equal(STALE);
+    });
+
+    it('writes nothing when declined', async () => {
+      makeScriptPackage(SCRIPT, { dataspace: 'default', dataLineage: STALE });
+      const before = fs.readFileSync(configFile(), 'utf8');
+      confirmStub.resolves(false);
+      const result = await ScriptScan.run([]);
+      expect(result.success).to.be.true;
+      expect(result.executionResult.written).to.equal(false);
+      expect(fs.readFileSync(configFile(), 'utf8')).to.equal(before);
+      expect(fs.existsSync(path.join(testDir, 'requirements.txt'))).to.be.false;
+    });
+
+    it('--no-prompt writes without asking', async () => {
+      makeScriptPackage(SCRIPT, { dataspace: 'default', dataLineage: STALE });
+      await ScriptScan.run(['--no-prompt']);
+      expect(confirmStub.called).to.be.false;
+      expect(readConfig().permissions).to.have.property('write');
+    });
+
+    it('fails without --no-prompt when not interactive', async () => {
+      makeScriptPackage(SCRIPT, { dataspace: 'default', dataLineage: STALE });
+      const before = fs.readFileSync(configFile(), 'utf8');
+      process.stdin.isTTY = false;
+      try {
+        await ScriptScan.run([]);
+        expect.fail('Should have thrown');
+      } catch (error) {
+        expect((error as SfError).name).to.equal('ScanStaleLineageNotConfirmed');
+      }
+      expect(fs.readFileSync(configFile(), 'utf8')).to.equal(before);
+    });
+
+    it('--dry-run warns but never prompts', async () => {
+      makeScriptPackage(SCRIPT, { dataspace: 'default', dataLineage: STALE });
+      await ScriptScan.run(['--dry-run']);
+      expect(confirmStub.called).to.be.false;
+      expect(warnings().some((w) => w.includes('write: OldDest__dll'))).to.be.true;
     });
   });
 });

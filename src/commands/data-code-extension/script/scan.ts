@@ -50,6 +50,14 @@ export default class Scan extends ScanBase {
       description: messages.getMessage('flags.noRequirements.description'),
       default: false,
     }),
+    // Hidden alongside the lineage commands until field-level lineage is generally available.
+    'no-prompt': Flags.boolean({
+      char: 'p',
+      summary: messages.getMessage('flags.noPrompt.summary'),
+      description: messages.getMessage('flags.noPrompt.description'),
+      default: false,
+      hidden: true,
+    }),
   };
 
   // eslint-disable-next-line class-methods-use-this

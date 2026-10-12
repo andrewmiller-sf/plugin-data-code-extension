@@ -44,6 +44,11 @@ export type NativeScanOptions = {
   noRequirements?: boolean;
   /** Override for the package type. If omitted, resolved via .datacustomcode_proj/sdk_config.json. */
   packageType?: CodeType;
+  /**
+   * Called with the updated config just before config.json is written (never on dry run).
+   * Resolving `false` skips every write and marks the result `written: false`.
+   */
+  confirmWrite?: (updatedConfig: Record<string, unknown>) => Promise<boolean>;
 };
 
 export type NativeScanResult = {
@@ -56,6 +61,8 @@ export type NativeScanResult = {
   requirements?: string[];
   /** True when --dry-run prevented file writes. */
   dryRun: boolean;
+  /** Set to false when `confirmWrite` declined the write. */
+  written?: false;
 };
 
 const ENTRYPOINT_FILE = 'entrypoint.py';
@@ -415,7 +422,21 @@ export async function updateConfig(
   configLocation?: string
 ): Promise<Record<string, unknown>> {
   const configPath = configLocation ?? path.join(path.dirname(entrypointPath), CONFIG_FILE);
+  const existing = await readConfigJson(configPath);
 
+  existing.entryPoint = path.basename(entrypointPath);
+
+  if (packageType === 'script') {
+    existing.dataspace = resolveDataspace(existing);
+    const calls = await scanFile(entrypointPath);
+    existing.permissions = buildPermissions(calls);
+  }
+
+  return existing;
+}
+
+/** Read and parse a package's config.json, with the errors `updateConfig` raises. */
+export async function readConfigJson(configPath: string): Promise<Record<string, unknown>> {
   let raw: string;
   try {
     raw = await fs.readFile(configPath, 'utf8');
@@ -435,15 +456,6 @@ export async function updateConfig(
   } catch (err) {
     throw new SfError(`Failed to parse JSON from ${configPath}: ${(err as Error).message}`, 'InvalidConfig');
   }
-
-  existing.entryPoint = path.basename(entrypointPath);
-
-  if (packageType === 'script') {
-    existing.dataspace = resolveDataspace(existing);
-    const calls = await scanFile(entrypointPath);
-    existing.permissions = buildPermissions(calls);
-  }
-
   return existing;
 }
 
@@ -512,6 +524,11 @@ export async function executeNativeScan(opts: NativeScanOptions): Promise<Native
   };
 
   if (opts.dryRun) {
+    return result;
+  }
+
+  if (opts.confirmWrite && !(await opts.confirmWrite(updatedConfig))) {
+    result.written = false;
     return result;
   }
 

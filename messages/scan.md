@@ -101,3 +101,34 @@ Checking required Python packages...
 # info.packageFound
 
 Package '%s' version %s found
+
+# flags.noPrompt.summary
+
+Write config.json without prompting when dataLineage is stale.
+
+# flags.noPrompt.description
+
+Skips the confirmation scan asks for when the rebuilt permissions no longer cover objects that dataLineage references. Required to write config.json in that case when running non-interactively.
+
+# warning.staleLineage
+
+dataLineage references objects that are no longer in permissions (%s entries affected). The package will fail to deploy (1041/1042) until you rerun 'data-code-extension script lineage generate' or edit dataLineage. Scan doesn't change dataLineage.
+%s
+
+# prompt.staleLineage
+
+Write the updated permissions to config.json anyway?
+
+# info.staleLineageNotWritten
+
+No files were modified. Update dataLineage, then scan again.
+
+# error.staleLineageNotConfirmed
+
+dataLineage references objects that are no longer in permissions, and writing config.json needs confirmation.
+
+# actions.staleLineageNotConfirmed
+
+- Re-run 'data-code-extension script lineage generate' to regenerate dataLineage, or edit it by hand.
+- Re-run scan with --no-prompt to write the updated permissions anyway.
+- Re-run scan with --dry-run to preview the changes.

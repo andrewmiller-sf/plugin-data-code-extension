@@ -50,7 +50,13 @@
         "description": "Commands for Data Cloud Code Extension.",
         "subtopics": {
           "script": {
-            "description": "Commands to initialize and manage script-based Data Cloud packages."
+            "description": "Commands to initialize and manage script-based Data Cloud packages.",
+            "subtopics": {
+              "lineage": {
+                "description": "Commands to generate field-level data lineage for script-based Data Cloud packages.",
+                "hidden": true
+              }
+            }
           },
           "function": {
             "description": "Commands to initialize and manage function-based Data Cloud packages."
