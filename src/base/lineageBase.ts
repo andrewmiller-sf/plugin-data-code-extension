@@ -13,18 +13,20 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-import { promises as fs } from 'node:fs';
+import { promises as fs, type Stats } from 'node:fs';
 import path from 'node:path';
 import { SfCommand } from '@salesforce/sf-plugins-core';
 import { Messages, Org, SfError } from '@salesforce/core';
 import { checkEnvironment } from '../utils/environmentChecker.js';
 import { splitDependencies } from '../utils/pythonRunner.js';
 import { LineageRunner, type LineageReport } from '../utils/lineageRunner.js';
-import { findBaseDirectory, getPackageType, readConfigJson } from '../utils/nativeScan.js';
+import { findBaseDirectory, getPackageType, getSdkConfigPath, readConfigJson } from '../utils/nativeScan.js';
 import {
   countPairs,
   diffLineage,
   findPermissionGaps,
+  hasInvalidLineage,
+  hasLineageSection,
   isEmptyDiff,
   readLineage,
   replaceLineage,
@@ -59,6 +61,8 @@ export type LineageGenerateResult = SharedResultProps & {
 };
 
 const CONFIG_FILE = 'config.json';
+/** Project config the SDK loads implicitly from the directory above `payload/`. */
+const PROJECT_CONFIG_YAML = 'config.yaml';
 
 // eslint-disable-next-line sf-plugin/command-summary, sf-plugin/command-example
 export abstract class LineageBase extends SfCommand<LineageGenerateResult> {
@@ -79,7 +83,28 @@ export abstract class LineageBase extends SfCommand<LineageGenerateResult> {
         throw new SfError(messages.getMessage('error.functionPackage', [flags.entrypoint]), 'LineageFunctionPackage');
       }
       // Read config.json up front so a missing or malformed file fails before the run.
-      const config = await readConfigJson(configPath);
+      await readConfigJson(configPath);
+
+      const outputFile = flags['output-file'] ? path.resolve(flags['output-file']) : undefined;
+      if (outputFile) {
+        // Everything under payload/ is run and deployed; .datacustomcode_proj/ holds package metadata.
+        const payloadDir = path.dirname(entrypoint);
+        const sdkConfigPath = getSdkConfigPath(findBaseDirectory(entrypoint));
+        const inputDirs = [payloadDir, path.dirname(sdkConfigPath)];
+        const inputFiles = [
+          configPath,
+          entrypoint,
+          sdkConfigPath,
+          path.join(path.dirname(payloadDir), PROJECT_CONFIG_YAML),
+          ...(flags['config-file'] ? [path.resolve(flags['config-file'])] : []),
+        ];
+        if (await isPackageInput(outputFile, inputDirs, inputFiles)) {
+          throw new SfError(
+            messages.getMessage('error.outputFileCollision', [outputFile]),
+            'LineageOutputFileCollision'
+          );
+        }
+      }
 
       const { pythonInfo, packageInfo } = await checkEnvironment(this.spinner, this.log.bind(this), messages);
 
@@ -103,12 +128,14 @@ export abstract class LineageBase extends SfCommand<LineageGenerateResult> {
         onStderr: (chunk) => process.stderr.write(chunk),
       });
 
-      const outputFile = flags['output-file'] ? path.resolve(flags['output-file']) : undefined;
       if (outputFile) {
         await fs.writeFile(outputFile, `${JSON.stringify(lineage, null, 2)}\n`, 'utf8');
         this.log(messages.getMessage('info.outputWritten', [outputFile]));
       }
 
+      // Re-read so edits made during the run aren't overwritten.
+      const config = await readConfigJson(configPath);
+      const shownLineage = JSON.stringify(config.dataLineage);
       const entries = lineage.dataLineage;
       const current = readLineage(config);
       const diff = diffLineage(current, entries);
@@ -145,17 +172,27 @@ export abstract class LineageBase extends SfCommand<LineageGenerateResult> {
         return result;
       }
 
-      if (isEmptyDiff(diff)) {
+      if (isEmptyDiff(diff) && !hasInvalidLineage(config)) {
         this.log(messages.getMessage('info.unchanged', [configPath]));
         return result;
       }
 
-      if (current.length > 0 && !(await this.confirmReplace(messages, flags['no-prompt']))) {
+      if (hasLineageSection(config) && !(await this.confirmReplace(messages, flags['no-prompt']))) {
         this.log(messages.getMessage('info.notReplaced'));
         return result;
       }
 
-      await writeConfigJson(configPath, replaceLineage(config, entries));
+      // Re-read again: the prompt can wait indefinitely. Lineage edited meanwhile wasn't in the
+      // diff the customer confirmed, so don't replace it.
+      const latest = await readConfigJson(configPath);
+      if (JSON.stringify(latest.dataLineage) !== shownLineage) {
+        throw new SfError(
+          messages.getMessage('error.lineageChanged', [configPath]),
+          'LineageChangedDuringConfirm',
+          messages.getMessages('actions.lineageChanged')
+        );
+      }
+      await writeConfigJson(configPath, replaceLineage(latest, entries));
       this.log(messages.getMessage('info.written', [configPath]));
       return { ...result, written: true };
     } catch (error) {
@@ -207,6 +244,49 @@ export abstract class LineageBase extends SfCommand<LineageGenerateResult> {
 
   protected abstract getCodeType(): 'script';
   protected abstract getMessages(): Messages<string>;
+}
+
+/**
+ * True when `file` lies under one of `dirs` (as given or after resolving symlinks), or is one of
+ * `files` by path or by file identity, which also catches symlinks and hard links.
+ */
+async function isPackageInput(file: string, dirs: string[], files: string[]): Promise<boolean> {
+  const [target, realDirs, targetStat, fileStats] = await Promise.all([
+    realPath(file),
+    Promise.all(dirs.map(realPath)),
+    statOrUndefined(file),
+    Promise.all(files.map(statOrUndefined)),
+  ]);
+  const within = (child: string, dir: string): boolean => {
+    const relative = path.relative(dir, child);
+    return !path.isAbsolute(relative) && relative.split(path.sep)[0] !== '..';
+  };
+  return (
+    dirs.some((dir) => within(file, dir)) ||
+    realDirs.some((dir) => within(target, dir)) ||
+    (targetStat !== undefined &&
+      fileStats.some((stat) => stat !== undefined && stat.dev === targetStat.dev && stat.ino === targetStat.ino))
+  );
+}
+
+async function statOrUndefined(file: string): Promise<Stats | undefined> {
+  return fs.stat(file).catch(() => undefined);
+}
+
+/**
+ * Canonical path of `file`, resolving symlinks (and case, on case-insensitive file systems).
+ * A file that doesn't exist yet resolves through its parent directory.
+ */
+async function realPath(file: string): Promise<string> {
+  try {
+    return await fs.realpath(file);
+  } catch {
+    try {
+      return path.join(await fs.realpath(path.dirname(file)), path.basename(file));
+    } catch {
+      return path.resolve(file);
+    }
+  }
 }
 
 function bullets(lines: string[]): string {

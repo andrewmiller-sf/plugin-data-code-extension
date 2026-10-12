@@ -37,8 +37,28 @@ export function readLineage(config: Record<string, unknown>): LineageEntry[] {
       typeof entry === 'object' &&
       entry !== null &&
       typeof (entry as LineageEntry).targetField === 'string' &&
-      Array.isArray((entry as LineageEntry).sourceFields)
+      Array.isArray((entry as LineageEntry).sourceFields) &&
+      (entry as LineageEntry).sourceFields.every((field) => typeof field === 'string')
   );
+}
+
+/** True when the config has a `dataLineage` section that isn't an empty array. */
+export function hasLineageSection(config: Record<string, unknown>): boolean {
+  const section = config.dataLineage;
+  return section !== undefined && !(Array.isArray(section) && section.length === 0);
+}
+
+/**
+ * True when the config's `dataLineage` has entries `readLineage` drops, or repeats a target
+ * field. Targets compare case-insensitively, as deploy validation does.
+ */
+export function hasInvalidLineage(config: Record<string, unknown>): boolean {
+  const section = config.dataLineage;
+  if (section === undefined) return false;
+  if (!Array.isArray(section)) return true;
+  const entries = readLineage(config);
+  if (entries.length !== section.length) return true;
+  return new Set(entries.map((entry) => entry.targetField.toLowerCase())).size !== entries.length;
 }
 
 /** Per-target difference between the current `dataLineage` and a generated one. */

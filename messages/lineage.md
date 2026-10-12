@@ -107,6 +107,18 @@ Replace the existing dataLineage in config.json?
 
 Lineage can only be generated for script packages; '%s' is a function package.
 
+# error.outputFileCollision
+
+--output-file '%s' is inside the package's payload or project metadata, or is one of its config files. Choose a path outside the package's payload directory.
+
+# error.lineageChanged
+
+dataLineage in '%s' changed while waiting for confirmation, so it was not replaced.
+
+# actions.lineageChanged
+
+- Re-run the command to compare the generated lineage against the current dataLineage.
+
 # error.replaceNotConfirmed
 
 config.json already has a different dataLineage section, and replacing it needs confirmation.

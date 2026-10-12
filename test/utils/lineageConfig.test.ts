@@ -23,6 +23,8 @@ import {
   diffLineage,
   findPermissionGaps,
   findStaleLineage,
+  hasInvalidLineage,
+  hasLineageSection,
   isEmptyDiff,
   readLineage,
   replaceLineage,
@@ -45,6 +47,38 @@ describe('lineageConfig', () => {
     it('drops malformed entries', () => {
       const good = { targetField: 'o.a', sourceFields: ['i.a'] };
       expect(readLineage({ dataLineage: [good, { targetField: 1 }, null] })).to.deep.equal([good]);
+    });
+
+    it('drops entries whose sourceFields are not all strings', () => {
+      const good = { targetField: 'o.a', sourceFields: ['i.a'] };
+      expect(readLineage({ dataLineage: [good, { targetField: 'o.b', sourceFields: [null] }] })).to.deep.equal([good]);
+    });
+  });
+
+  it('hasLineageSection ignores an absent or empty section', () => {
+    expect(hasLineageSection({})).to.equal(false);
+    expect(hasLineageSection({ dataLineage: [] })).to.equal(false);
+    expect(hasLineageSection({ dataLineage: [null] })).to.equal(true);
+    expect(hasLineageSection({ dataLineage: 'nope' })).to.equal(true);
+  });
+
+  describe('hasInvalidLineage', () => {
+    const entry = { targetField: 'o.a', sourceFields: ['i.a'] };
+
+    it('is false for absent or well-formed lineage', () => {
+      expect(hasInvalidLineage({})).to.equal(false);
+      expect(hasInvalidLineage({ dataLineage: [] })).to.equal(false);
+      expect(hasInvalidLineage({ dataLineage: [entry, { targetField: 'o.b', sourceFields: [] }] })).to.equal(false);
+    });
+
+    it('flags a non-array section and malformed entries', () => {
+      expect(hasInvalidLineage({ dataLineage: 'nope' })).to.equal(true);
+      expect(hasInvalidLineage({ dataLineage: [entry, { targetField: 'o.b', sourceFields: [null] }] })).to.equal(true);
+    });
+
+    it('flags duplicate targets case-insensitively', () => {
+      expect(hasInvalidLineage({ dataLineage: [entry, entry] })).to.equal(true);
+      expect(hasInvalidLineage({ dataLineage: [entry, { ...entry, targetField: 'O.A' }] })).to.equal(true);
     });
   });
 
@@ -125,6 +159,12 @@ describe('lineageConfig', () => {
       expect(findStaleLineage(config)).to.deep.equal({ targets: ['old_out__dll'], sources: ['old_in__dll'] });
       expect(countEntriesReferencing(config, ['old_out__dll'])).to.equal(1);
       expect(countEntriesReferencing(config, ['old_out__dll', 'OLD_IN__dll'])).to.equal(2);
+    });
+
+    it('ignores malformed source fields instead of throwing', () => {
+      const config = { ...CONFIG, dataLineage: [{ targetField: 'out__dll.a', sourceFields: [null] }] };
+      expect(findStaleLineage(config)).to.deep.equal({ targets: [], sources: [] });
+      expect(countEntriesReferencing(config, ['in__dll'])).to.equal(0);
     });
 
     it('reads DMO permissions too', () => {

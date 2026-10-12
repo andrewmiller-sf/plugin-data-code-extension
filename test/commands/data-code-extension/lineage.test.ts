@@ -182,6 +182,91 @@ describe('data-code-extension script lineage generate', () => {
     expect(result.outputFile).to.equal(path.resolve(outputFile));
   });
 
+  describe('--output-file collisions', () => {
+    async function expectCollision(outputFile: string): Promise<void> {
+      const before = fs.readFileSync(configPath, 'utf8');
+      try {
+        await LineageGenerate.run([...baseArgs(), '--dry-run', '--output-file', outputFile]);
+        expect.fail('Should have thrown');
+      } catch (error) {
+        expect((error as SfError).name).to.equal('LineageOutputFileCollision');
+      }
+      expect(generateStub.called).to.be.false;
+      expect(fs.readFileSync(configPath, 'utf8')).to.equal(before);
+    }
+
+    it('rejects the package config.json', async () => {
+      await expectCollision(configPath);
+    });
+
+    it('rejects the entrypoint', async () => {
+      await expectCollision(entrypointPath);
+    });
+
+    it('rejects a symlink to config.json', async () => {
+      const link = path.join(testDir, 'link.json');
+      fs.symlinkSync(configPath, link);
+      await expectCollision(link);
+    });
+
+    it('rejects a new file inside payload/', async () => {
+      await expectCollision(path.join(testDir, 'payload', 'lineage-result.json'));
+    });
+
+    it('rejects SDK package metadata', async () => {
+      await expectCollision(path.join(testDir, '.datacustomcode_proj', 'sdk_config.json'));
+    });
+
+    it('rejects the project config.yaml', async () => {
+      fs.writeFileSync(path.join(testDir, 'config.yaml'), 'reader_config: {}\n');
+      await expectCollision(path.join(testDir, 'config.yaml'));
+    });
+
+    it('rejects a symlinked directory that points into payload/', async () => {
+      const link = path.join(testDir, 'payload-link');
+      fs.symlinkSync(path.join(testDir, 'payload'), link);
+      await expectCollision(path.join(link, 'lineage-result.json'));
+    });
+
+    it('rejects payload/config.json when it is a symlink to a config outside payload/', async () => {
+      const shared = path.join(testDir, 'shared-config.json');
+      fs.renameSync(configPath, shared);
+      fs.symlinkSync(shared, configPath);
+      const before = fs.readFileSync(shared, 'utf8');
+      await expectCollision(configPath);
+      expect(fs.readFileSync(shared, 'utf8')).to.equal(before);
+    });
+
+    it('rejects a hard link to config.json', async () => {
+      const link = path.join(testDir, 'hardlink.json');
+      fs.linkSync(configPath, link);
+      await expectCollision(link);
+    });
+
+    it('rejects a hard link to the SDK metadata', async () => {
+      const link = path.join(testDir, 'sdk-hardlink.json');
+      fs.linkSync(path.join(testDir, '.datacustomcode_proj', 'sdk_config.json'), link);
+      await expectCollision(link);
+    });
+
+    it('allows a new file at the project root', async () => {
+      const outputFile = path.join(testDir, 'lineage-result.json');
+      await LineageGenerate.run([...baseArgs(), '--dry-run', '--output-file', outputFile]);
+      expect(fs.existsSync(outputFile)).to.be.true;
+    });
+  });
+
+  it('keeps config.json edits made while lineage was generating', async () => {
+    generateStub.callsFake(async () => {
+      writeConfig({ ...readConfig(), dataspace: 'edited' });
+      return structuredClone(REPORT);
+    });
+    const result = await LineageGenerate.run(baseArgs());
+    expect(result.written).to.equal(true);
+    expect(readConfig().dataspace).to.equal('edited');
+    expect(readConfig().dataLineage).to.deep.equal(REPORT.dataLineage);
+  });
+
   it('rejects function packages before running', async () => {
     fs.writeFileSync(
       path.join(testDir, '.datacustomcode_proj', 'sdk_config.json'),
@@ -237,6 +322,21 @@ describe('data-code-extension script lineage generate', () => {
       expect(result.written).to.equal(true);
     });
 
+    it('does not replace lineage edited while the prompt was pending', async () => {
+      const edited = [{ targetField: 'out__dll.edited', sourceFields: ['in__dll.edited'] }];
+      confirmStub.callsFake(async () => {
+        writeConfig({ ...readConfig(), dataLineage: edited });
+        return true;
+      });
+      try {
+        await LineageGenerate.run(baseArgs());
+        expect.fail('Should have thrown');
+      } catch (error) {
+        expect((error as SfError).name).to.equal('LineageChangedDuringConfirm');
+      }
+      expect(readConfig().dataLineage).to.deep.equal(edited);
+    });
+
     it('fails without --no-prompt when not interactive', async () => {
       process.stdin.isTTY = false;
       try {
@@ -257,6 +357,23 @@ describe('data-code-extension script lineage generate', () => {
         expect((error as SfError).name).to.equal('LineageReplaceNotConfirmed');
       }
       expect(readConfig().dataLineage).to.deep.equal(OLD);
+    });
+
+    it('rewrites duplicate targets even when the diff is empty', async () => {
+      const duplicated = [...REPORT.dataLineage, REPORT.dataLineage[0]];
+      writeConfig({ dataspace: 'default', permissions: PERMISSIONS, dataLineage: duplicated });
+      const result = await LineageGenerate.run([...baseArgs(), '--no-prompt']);
+      expect(result.written).to.equal(true);
+      expect(readConfig().dataLineage).to.deep.equal(REPORT.dataLineage);
+    });
+
+    it('asks before replacing a section with only malformed entries', async () => {
+      const malformed = [{ targetField: 'out__dll.id__c', sourceFields: [null] }];
+      writeConfig({ dataspace: 'default', permissions: PERMISSIONS, dataLineage: malformed });
+      const result = await LineageGenerate.run(baseArgs());
+      expect(confirmStub.calledOnce).to.be.true;
+      expect(result.written).to.equal(true);
+      expect(readConfig().dataLineage).to.deep.equal(REPORT.dataLineage);
     });
 
     it('does not prompt when the generated lineage is identical', async () => {
