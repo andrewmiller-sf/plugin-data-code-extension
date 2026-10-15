@@ -77,6 +77,19 @@ export abstract class ScanBase extends SfCommand<ScanResult> {
         if (hasStaleLineage(stale)) this.warnStaleLineage(messages, executionResult.config, stale);
       }
 
+      if (executionResult.written === false) {
+        this.log(messages.getMessage('info.staleLineageNotWritten'));
+        return {
+          success: false,
+          pythonInfo,
+          packageInfo,
+          codeType,
+          workingDirectory: workingDir,
+          executionResult,
+          message: messages.getMessage('info.staleLineageNotWritten'),
+        };
+      }
+
       this.log(messages.getMessage('info.scanExecuted', [workingDir]));
 
       // Echo the resulting config — mirrors the Python CLI's behavior of printing the
@@ -93,10 +106,6 @@ export abstract class ScanBase extends SfCommand<ScanResult> {
 
       if (executionResult.dryRun) {
         this.log(messages.getMessage('info.dryRunNotice'));
-      }
-
-      if (executionResult.written === false) {
-        this.log(messages.getMessage('info.staleLineageNotWritten'));
       }
 
       return {

@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-import { promises as fs, type Stats } from 'node:fs';
+import { constants as fsConstants, promises as fs, type Stats } from 'node:fs';
 import path from 'node:path';
 import { SfCommand } from '@salesforce/sf-plugins-core';
 import { Messages, Org, SfError } from '@salesforce/core';
@@ -111,12 +111,22 @@ export abstract class LineageBase extends SfCommand<LineageGenerateResult> {
             'LineageOutputFileCollision'
           );
         }
+        // Fail before the run rather than lose its result to a bad path afterwards.
+        await fs.access(path.dirname(outputFile), fsConstants.W_OK).catch((err: Error) => {
+          throw new SfError(
+            messages.getMessage('error.outputFileUnwritable', [outputFile, err.message]),
+            'LineageOutputFileUnwritable'
+          );
+        });
       }
 
       const { pythonInfo, packageInfo } = await checkEnvironment(this.spinner, this.log.bind(this), messages);
 
       const targetOrg = flags['target-org'];
-      const orgUsername = targetOrg.getUsername() ?? 'target org';
+      const orgUsername = targetOrg.getUsername();
+      if (!orgUsername) {
+        throw new SfError(messages.getMessage('error.noUsername'), 'LineageNoUsername');
+      }
       this.spinner.start(messages.getMessage('info.authenticating', [orgUsername]));
       await targetOrg.getConnection().refreshAuth();
       this.spinner.stop();
@@ -142,7 +152,7 @@ export abstract class LineageBase extends SfCommand<LineageGenerateResult> {
 
       // Re-read so edits made during the run aren't overwritten.
       const config = await readConfigJson(configPath);
-      const shownLineage = JSON.stringify(config.dataLineage);
+      const shownConfig = JSON.stringify(config);
       const entries = lineage.dataLineage;
       const current = readLineage(config);
       const diff = diffLineage(current, entries);
@@ -189,10 +199,10 @@ export abstract class LineageBase extends SfCommand<LineageGenerateResult> {
         return result;
       }
 
-      // Re-read again: the prompt can wait up to LINEAGE_CONFIRM_TIMEOUT_MS. Lineage edited meanwhile wasn't in the
-      // diff the customer confirmed, so don't replace it.
+      // Re-read again: the prompt can wait up to LINEAGE_CONFIRM_TIMEOUT_MS. Edits made meanwhile (to dataLineage, or
+      // to permissions the gaps were checked against) weren't in what the customer confirmed, so don't write.
       const latest = await readConfigJson(configPath);
-      if (JSON.stringify(latest.dataLineage) !== shownLineage) {
+      if (JSON.stringify(latest) !== shownConfig) {
         throw new SfError(
           messages.getMessage('error.lineageChanged', [configPath]),
           'LineageChangedDuringConfirm',

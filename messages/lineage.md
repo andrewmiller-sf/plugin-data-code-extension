@@ -132,11 +132,19 @@ Lineage can only be generated for script packages; '%s' is a function package.
 
 # error.lineageChanged
 
-dataLineage in '%s' changed while waiting for confirmation, so it was not replaced.
+'%s' changed while waiting for confirmation, so dataLineage was not replaced.
 
 # actions.lineageChanged
 
-- Re-run the command to compare the generated lineage against the current dataLineage.
+- Re-run the command to compare the generated lineage against the current config.json.
+
+# error.outputFileUnwritable
+
+Can't write --output-file '%s': %s
+
+# error.noUsername
+
+The target org has no username to authenticate the lineage run with.
 
 # error.ownershipNotAccepted
 
@@ -167,6 +175,14 @@ The installed salesforce-data-customcode package doesn't support lineage generat
 # error.resultMissing
 
 The lineage run finished but produced no result: %s
+
+# error.resultInvalid
+
+The lineage run produced a result this CLI can't read: %s
+
+# actions.resultInvalid
+
+- Upgrade the SDK with 'pip install -U salesforce-data-customcode', then try again.
 
 # actions.resultMissing
 

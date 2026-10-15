@@ -326,8 +326,14 @@ describe('data-code-extension scan commands', () => {
       const before = fs.readFileSync(configFile(), 'utf8');
       confirmStub.resolves(false);
       const result = await ScriptScan.run([]);
-      expect(result.success).to.be.true;
+      expect(result.success).to.be.false;
       expect(result.executionResult.written).to.equal(false);
+      const logged = sfCommandStubs.log
+        .getCalls()
+        .flatMap((call) => call.args)
+        .join('\n');
+      expect(logged).to.not.include('Package scanned successfully');
+      expect(logged).to.include('No files were modified');
       expect(fs.readFileSync(configFile(), 'utf8')).to.equal(before);
       expect(fs.existsSync(path.join(testDir, 'requirements.txt'))).to.be.false;
     });

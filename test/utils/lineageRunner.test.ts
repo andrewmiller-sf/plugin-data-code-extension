@@ -23,6 +23,7 @@ import {
   GENERATE_LINEAGE_SHIM,
   LINEAGE_UNAVAILABLE_EXIT_CODE,
   LINEAGE_UNAVAILABLE_MARKER,
+  parseLineageReport,
   type LineagePayload,
   type LineageReport,
   type LineageRunOptions,
@@ -160,6 +161,38 @@ describe('lineageRunner', () => {
       expect(GENERATE_LINEAGE_SHIM).to.include(`sys.exit(${LINEAGE_UNAVAILABLE_EXIT_CODE})`);
       expect(GENERATE_LINEAGE_SHIM).to.include(LINEAGE_UNAVAILABLE_MARKER);
     });
+  });
+
+  describe('parseLineageReport', () => {
+    const valid = {
+      dataLineage: [],
+      unresolved: [],
+      noSources: [],
+      udfFields: [],
+      targets: [],
+      sources: [],
+      pairCount: 0,
+    };
+
+    it('returns a well-formed report', () => {
+      expect(parseLineageReport(JSON.stringify(valid))).to.deep.equal(valid);
+    });
+
+    for (const [name, raw, detail] of [
+      ['malformed JSON', '{', 'JSON'],
+      ['a non-object', '[]', 'expected a JSON object'],
+      ['missing fields', JSON.stringify({ ...valid, udfFields: undefined, noSources: null }), 'noSources, udfFields'],
+    ]) {
+      it(`rejects ${name}`, () => {
+        try {
+          parseLineageReport(raw);
+          expect.fail('Should have thrown');
+        } catch (error) {
+          expect((error as SfError).name).to.equal('LineageResultInvalid');
+          expect((error as SfError).message).to.include(detail);
+        }
+      });
+    }
   });
 
   describe('generateLineage', () => {

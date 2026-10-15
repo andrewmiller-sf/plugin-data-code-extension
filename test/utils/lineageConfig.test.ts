@@ -100,6 +100,20 @@ describe('lineageConfig', () => {
       expect(isEmptyDiff(diff)).to.equal(false);
     });
 
+    it('matches targets and sources case-insensitively', () => {
+      const diff = diffLineage(
+        [
+          { targetField: 'Out__dll.Name__c', sourceFields: ['In__dll.Name__c'] },
+          { targetField: 'Out__dll.Gone__c', sourceFields: ['In__dll.A__c'] },
+        ],
+        [
+          { targetField: 'out__dll.name__c', sourceFields: ['in__dll.name__c'] },
+          { targetField: 'out__dll.new__c', sourceFields: ['in__dll.a__c'] },
+        ]
+      );
+      expect(diff).to.deep.equal({ added: ['out__dll.new__c'], removed: ['Out__dll.Gone__c'], changed: [] });
+    });
+
     it('is empty for identical lineage', () => {
       const entries = [{ targetField: 'o.a', sourceFields: ['i.a'] }];
       expect(isEmptyDiff(diffLineage(entries, entries))).to.equal(true);

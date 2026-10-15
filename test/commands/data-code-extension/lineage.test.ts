@@ -201,6 +201,31 @@ describe('data-code-extension script lineage generate', () => {
     expect(result.outputFile).to.equal(path.resolve(outputFile));
   });
 
+  it('rejects an --output-file in a missing directory before the run', async () => {
+    const outputFile = path.join(testDir, 'missing', 'lineage-result.json');
+    try {
+      await LineageGenerate.run([...baseArgs(), '--dry-run', '--output-file', outputFile]);
+      expect.fail('Should have thrown');
+    } catch (error) {
+      expect((error as SfError).name).to.equal('LineageOutputFileUnwritable');
+    }
+    expect(generateStub.called).to.be.false;
+  });
+
+  it('fails clearly when the target org has no username', async () => {
+    (Org.create as sinon.SinonStub).resolves({
+      getUsername: () => undefined,
+      getConnection: () => mockConnection,
+    } as unknown as Org);
+    try {
+      await LineageGenerate.run(baseArgs());
+      expect.fail('Should have thrown');
+    } catch (error) {
+      expect((error as SfError).name).to.equal('LineageNoUsername');
+    }
+    expect(generateStub.called).to.be.false;
+  });
+
   describe('--output-file collisions', () => {
     async function expectCollision(outputFile: string): Promise<void> {
       const before = fs.readFileSync(configPath, 'utf8');
@@ -465,6 +490,20 @@ describe('data-code-extension script lineage generate', () => {
         expect((error as SfError).name).to.equal('LineageChangedDuringConfirm');
       }
       expect(readConfig().dataLineage).to.deep.equal(edited);
+    });
+
+    it('does not write when permissions change while the prompt was pending', async () => {
+      confirmStub.callsFake(async () => {
+        writeConfig({ ...readConfig(), permissions: { read: {}, write: {} } });
+        return true;
+      });
+      try {
+        await LineageGenerate.run(baseArgs());
+        expect.fail('Should have thrown');
+      } catch (error) {
+        expect((error as SfError).name).to.equal('LineageChangedDuringConfirm');
+      }
+      expect(readConfig().permissions).to.deep.equal({ read: {}, write: {} });
     });
 
     it('fails without --no-prompt when not interactive', async () => {

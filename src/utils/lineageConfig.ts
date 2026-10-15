@@ -67,18 +67,32 @@ export function hasInvalidLineage(config: Record<string, unknown>): boolean {
   return new Set(entries.map((entry) => entry.targetField.toLowerCase())).size !== entries.length;
 }
 
-/** Per-target difference between the current `dataLineage` and a generated one. */
+/**
+ * Per-target difference between the current `dataLineage` and a generated one. Field names
+ * compare case-insensitively, as deploy validation does; results use each side's own spelling.
+ */
 export function diffLineage(current: LineageEntry[], generated: LineageEntry[]): LineageDiff {
-  const key = (entry: LineageEntry): string => [...entry.sourceFields].sort().join('\n');
-  const before = new Map(current.map((entry) => [entry.targetField, key(entry)]));
-  const after = new Map(generated.map((entry) => [entry.targetField, key(entry)]));
+  const sourcesKey = (entry: LineageEntry): string =>
+    entry.sourceFields
+      .map((field) => field.toLowerCase())
+      .sort()
+      .join('\n');
+  const byTarget = (entries: LineageEntry[]): Map<string, { target: string; sources: string }> =>
+    new Map(
+      entries.map((entry) => [
+        entry.targetField.toLowerCase(),
+        { target: entry.targetField, sources: sourcesKey(entry) },
+      ])
+    );
+  const before = byTarget(current);
+  const after = byTarget(generated);
   const diff: LineageDiff = { added: [], removed: [], changed: [] };
-  for (const [target, sources] of after) {
-    if (!before.has(target)) diff.added.push(target);
-    else if (before.get(target) !== sources) diff.changed.push(target);
+  for (const [key, { target, sources }] of after) {
+    if (!before.has(key)) diff.added.push(target);
+    else if (before.get(key)!.sources !== sources) diff.changed.push(target);
   }
-  for (const target of before.keys()) {
-    if (!after.has(target)) diff.removed.push(target);
+  for (const [key, { target }] of before) {
+    if (!after.has(key)) diff.removed.push(target);
   }
   return diff;
 }

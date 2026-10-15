@@ -154,10 +154,38 @@ export async function generateLineage(opts: LineageRunOptions, deps?: PythonRunn
         messages.getMessages('actions.resultMissing')
       );
     }
-    return JSON.parse(raw) as LineageReport;
+    return parseLineageReport(raw);
   } finally {
     await fs.rm(tempDir, { recursive: true, force: true });
   }
+}
+
+const REPORT_ARRAYS = ['dataLineage', 'unresolved', 'noSources', 'udfFields', 'targets', 'sources'] as const;
+
+/** Parse the SDK's result file, failing clearly when it isn't the shape this CLI reads. */
+export function parseLineageReport(raw: string): LineageReport {
+  let report: unknown;
+  try {
+    report = JSON.parse(raw);
+  } catch (err) {
+    throw invalidResult((err as Error).message);
+  }
+  if (typeof report !== 'object' || report === null || Array.isArray(report)) {
+    throw invalidResult('expected a JSON object');
+  }
+  const missing = REPORT_ARRAYS.filter((key) => !Array.isArray((report as Record<string, unknown>)[key]));
+  if (missing.length > 0) {
+    throw invalidResult(`missing or non-array ${missing.join(', ')}`);
+  }
+  return report as LineageReport;
+}
+
+function invalidResult(detail: string): SfError {
+  return new SfError(
+    messages.getMessage('error.resultInvalid', [detail]),
+    'LineageResultInvalid',
+    messages.getMessages('actions.resultInvalid')
+  );
 }
 
 /** Class wrapper around {@link generateLineage}, so command tests can stub the run. */
