@@ -248,6 +248,32 @@ describe('data-code-extension script lineage generate', () => {
         await expectCollision(buildFile);
         expect(fs.readFileSync(buildFile, 'utf8')).to.equal('original\n');
       });
+
+      it(`rejects the packaged build file ${name} when it does not exist yet`, async () => {
+        const buildFile = path.join(testDir, name);
+        fs.rmSync(buildFile, { force: true });
+        await expectCollision(buildFile);
+        expect(fs.existsSync(buildFile)).to.be.false;
+      });
+
+      it(`rejects a dangling symlink to the missing packaged build file ${name}`, async () => {
+        const buildFile = path.join(testDir, name);
+        fs.rmSync(buildFile, { force: true });
+        const link = path.join(testDir, `link-${name}`);
+        fs.symlinkSync(buildFile, link);
+        await expectCollision(link);
+        expect(fs.existsSync(buildFile)).to.be.false;
+      });
+
+      it(`rejects the missing packaged build file ${name} spelled in another case`, async function () {
+        if (process.platform !== 'darwin' && process.platform !== 'win32') {
+          this.skip();
+        }
+        const buildFile = path.join(testDir, name);
+        fs.rmSync(buildFile, { force: true });
+        await expectCollision(path.join(testDir, name.toUpperCase()));
+        expect(fs.readdirSync(testDir).some((entry) => entry.toLowerCase() === name.toLowerCase())).to.be.false;
+      });
     }
 
     it('rejects a symlinked directory that points into payload/', async () => {

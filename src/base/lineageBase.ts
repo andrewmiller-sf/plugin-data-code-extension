@@ -280,39 +280,64 @@ export abstract class LineageBase extends SfCommand<LineageGenerateResult> {
 
 /**
  * True when `file` lies under one of `dirs` (as given or after resolving symlinks), or is one of
- * `files` by path or by file identity, which also catches symlinks and hard links.
+ * `files` by path or by file identity, which also catches symlinks and hard links. Paths are compared
+ * by path as well as identity so inputs that don't exist yet (no identity to match) are still caught.
  */
 async function isPackageInput(file: string, dirs: string[], files: string[]): Promise<boolean> {
-  const [target, realDirs, targetStat, fileStats] = await Promise.all([
+  const [target, realDirs, realFiles, targetStat, fileStats] = await Promise.all([
     realPath(file),
     Promise.all(dirs.map(realPath)),
+    Promise.all(files.map(realPath)),
     statOrUndefined(file),
     Promise.all(files.map(statOrUndefined)),
   ]);
   const within = (child: string, dir: string): boolean => {
-    const relative = path.relative(dir, child);
+    const relative = path.relative(pathKey(dir), pathKey(child));
     return !path.isAbsolute(relative) && relative.split(path.sep)[0] !== '..';
   };
+  const sameFile = (a: string, b: string): boolean => pathKey(a) === pathKey(b);
   return (
     dirs.some((dir) => within(file, dir)) ||
     realDirs.some((dir) => within(target, dir)) ||
+    files.some((input) => sameFile(input, file)) ||
+    realFiles.some((input) => sameFile(input, target)) ||
     (targetStat !== undefined &&
       fileStats.some((stat) => stat !== undefined && stat.dev === targetStat.dev && stat.ino === targetStat.ino))
   );
+}
+
+/**
+ * Absolute path folded to lower case where the default file system ignores case (macOS, Windows), so
+ * `REQUIREMENTS.TXT` matches a `requirements.txt` that doesn't exist yet. On a case-sensitive volume
+ * this only over-rejects names that differ from an input by case.
+ */
+function pathKey(file: string): string {
+  const resolved = path.resolve(file);
+  return process.platform === 'darwin' || process.platform === 'win32' ? resolved.toLowerCase() : resolved;
 }
 
 async function statOrUndefined(file: string): Promise<Stats | undefined> {
   return fs.stat(file).catch(() => undefined);
 }
 
+/** Symlink hops followed before giving up, matching the usual OS limit (ELOOP). */
+const MAX_SYMLINK_HOPS = 40;
+
 /**
  * Canonical path of `file`, resolving symlinks (and case, on case-insensitive file systems).
- * A file that doesn't exist yet resolves through its parent directory.
+ * A file that doesn't exist yet resolves through its parent directory, and a dangling symlink
+ * resolves to the path it points at, which is where a write through it would land.
  */
-async function realPath(file: string): Promise<string> {
+async function realPath(file: string, hops = 0): Promise<string> {
   try {
     return await fs.realpath(file);
   } catch {
+    if (hops < MAX_SYMLINK_HOPS) {
+      const link = await fs.readlink(file).catch(() => undefined);
+      if (link !== undefined) {
+        return realPath(path.resolve(path.dirname(file), link), hops + 1);
+      }
+    }
     try {
       return path.join(await fs.realpath(path.dirname(file)), path.basename(file));
     } catch {
