@@ -512,6 +512,8 @@ export async function executeNativeScan(opts: NativeScanOptions): Promise<Native
   const packageType = opts.packageType ?? (await getPackageType(baseDir));
   const configPath = opts.configFile ?? path.join(path.dirname(entrypoint), CONFIG_FILE);
 
+  // Snapshot what the scan starts from so edits made while confirmWrite waits are not overwritten.
+  const original = JSON.stringify(await readConfigJson(configPath));
   const updatedConfig = await updateConfig(entrypoint, packageType, configPath);
 
   const result: NativeScanResult = {
@@ -530,6 +532,13 @@ export async function executeNativeScan(opts: NativeScanOptions): Promise<Native
   if (opts.confirmWrite && !(await opts.confirmWrite(updatedConfig))) {
     result.written = false;
     return result;
+  }
+  if (opts.confirmWrite && JSON.stringify(await readConfigJson(configPath)) !== original) {
+    throw new SfError(
+      messages.getMessage('error.scanConfigChanged', [configPath]),
+      'ScanConfigChangedDuringConfirm',
+      messages.getMessages('actions.scanConfigChanged')
+    );
   }
 
   await fs.writeFile(configPath, JSON.stringify(updatedConfig, null, 2), 'utf8');

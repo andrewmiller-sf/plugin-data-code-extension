@@ -241,6 +241,15 @@ describe('data-code-extension script lineage generate', () => {
       await expectCollision(path.join(testDir, 'config.yaml'));
     });
 
+    for (const name of ['requirements.txt', 'build_native_dependencies.sh', 'Dockerfile.dependencies']) {
+      it(`rejects the packaged build file ${name}`, async () => {
+        const buildFile = path.join(testDir, name);
+        fs.writeFileSync(buildFile, 'original\n');
+        await expectCollision(buildFile);
+        expect(fs.readFileSync(buildFile, 'utf8')).to.equal('original\n');
+      });
+    }
+
     it('rejects a symlinked directory that points into payload/', async () => {
       const link = path.join(testDir, 'payload-link');
       fs.symlinkSync(path.join(testDir, 'payload'), link);

@@ -65,6 +65,8 @@ export type LineageGenerateResult = SharedResultProps & {
 const CONFIG_FILE = 'config.json';
 /** Project config the SDK loads implicitly from the directory above `payload/`. */
 const PROJECT_CONFIG_YAML = 'config.yaml';
+/** Base-directory files `deploy` packages alongside payload/ (see zipBuilder). */
+const PACKAGED_BUILD_FILES = ['requirements.txt', 'build_native_dependencies.sh', 'Dockerfile.dependencies'];
 
 // eslint-disable-next-line sf-plugin/command-summary, sf-plugin/command-example
 export abstract class LineageBase extends SfCommand<LineageGenerateResult> {
@@ -91,13 +93,16 @@ export abstract class LineageBase extends SfCommand<LineageGenerateResult> {
       if (outputFile) {
         // Everything under payload/ is run and deployed; .datacustomcode_proj/ holds package metadata.
         const payloadDir = path.dirname(entrypoint);
-        const sdkConfigPath = getSdkConfigPath(findBaseDirectory(entrypoint));
+        // Root-level requirements.txt and the native dependency build files are packaged too.
+        const baseDir = findBaseDirectory(entrypoint);
+        const sdkConfigPath = getSdkConfigPath(baseDir);
         const inputDirs = [payloadDir, path.dirname(sdkConfigPath)];
         const inputFiles = [
           configPath,
           entrypoint,
           sdkConfigPath,
           path.join(path.dirname(payloadDir), PROJECT_CONFIG_YAML),
+          ...PACKAGED_BUILD_FILES.map((name) => path.join(baseDir, name)),
           ...(flags['config-file'] ? [path.resolve(flags['config-file'])] : []),
         ];
         if (await isPackageInput(outputFile, inputDirs, inputFiles)) {
