@@ -22,6 +22,12 @@ export type LineageDiff = {
   changed: string[];
 };
 
+/**
+ * How long lineage confirmation prompts wait before declining. The sf default of 10s is too short to
+ * review the warnings and diff. Must stay finite: Node fires timers over ~24.8 days after 1ms.
+ */
+export const LINEAGE_CONFIRM_TIMEOUT_MS = 10 * 60 * 1000;
+
 /** Objects referenced by lineage but missing from `permissions`, i.e. a 1041/1042 at deploy. */
 export type LineagePermissionGaps = {
   targets: string[];

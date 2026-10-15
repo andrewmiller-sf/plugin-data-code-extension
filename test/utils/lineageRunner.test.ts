@@ -88,6 +88,7 @@ const REPORT: LineageReport = {
   dataLineage: [{ targetField: 'out__dll.id__c', sourceFields: ['in__dll.id'] }],
   unresolved: [{ targetField: 'out__dll.x__c', reason: 'untraceable source' }],
   noSources: [],
+  udfFields: [],
   targets: ['out__dll'],
   sources: ['in__dll'],
   pairCount: 1,

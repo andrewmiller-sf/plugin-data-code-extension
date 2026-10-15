@@ -70,6 +70,11 @@ export default class Generate extends LineageBase {
       description: messages.getMessage('flags.noPrompt.description'),
       default: false,
     }),
+    'accept-lineage-ownership': Flags.boolean({
+      summary: messages.getMessage('flags.acceptLineageOwnership.summary'),
+      description: messages.getMessage('flags.acceptLineageOwnership.description'),
+      default: false,
+    }),
   };
 
   // eslint-disable-next-line class-methods-use-this

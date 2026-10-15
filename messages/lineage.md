@@ -6,6 +6,8 @@ Generate field-level dataLineage for a Data Code Extension %s package.
 
 Runs the package's entrypoint against a Salesforce org with every write intercepted, traces each written field back to the fields it was computed from, and replaces the dataLineage section of the package's config.json with the result. Nothing is written to Data Cloud. Run 'scan' first so the read and write permissions in config.json are current. Fields whose lineage can't be traced are listed and get no lineage unless you add entries by hand.
 
+Generated lineage is a best-effort analysis of your script and may be incomplete or wrong (for example, for UDFs or other code the tool can't see into). It determines how governance tags propagate, which can restrict or open access to data. You're responsible for reviewing and maintaining it. Before config.json is written, you must accept this, either at the prompt or with --accept-lineage-ownership.
+
 # examples.script
 
 - Generate lineage for a script package against the org with alias "myorg":
@@ -16,9 +18,9 @@ Runs the package's entrypoint against a Salesforce org with every write intercep
 
   <%= config.bin %> data-code-extension script lineage generate --entrypoint ./my-script-package/payload/entrypoint.py --target-org myorg --dry-run
 
-- Replace existing lineage without prompting, and keep the full result for review:
+- Accept ownership of the generated lineage and replace existing lineage without prompting, keeping the full result for review:
 
-  <%= config.bin %> data-code-extension script lineage generate --entrypoint ./my-script-package/payload/entrypoint.py --target-org myorg --no-prompt --output-file ./lineage-result.json
+  <%= config.bin %> data-code-extension script lineage generate --entrypoint ./my-script-package/payload/entrypoint.py --target-org myorg --accept-lineage-ownership --no-prompt --output-file ./lineage-result.json
 
 # info.checkingPython
 
@@ -73,9 +75,9 @@ dataLineage in '%s' is already up to date.
 
 Updated dataLineage in '%s'.
 
-# info.notReplaced
+# info.notWritten
 
-Kept the existing dataLineage; config.json was not modified.
+Generated lineage was not accepted; config.json was not modified.
 
 # info.complete
 
@@ -84,6 +86,11 @@ Lineage generation completed successfully!
 # warning.unresolved
 
 %s target fields could not be traced and get no lineage unless you add entries by hand:
+%s
+
+# warning.udf
+
+%s target fields are computed by user-defined functions (UDFs). Their lineage lists only the fields passed to the UDF; the tool can't see what else the UDF reads (for example, a lookup table, a broadcast variable, or a file). Review these fields and add any missing source fields by hand:
 %s
 
 # warning.permissionGaps
@@ -103,6 +110,18 @@ This replaces the existing dataLineage section. Any entries you added or edited 
 
 Replace the existing dataLineage in config.json?
 
+# warning.ownership
+
+Generated lineage is a best-effort analysis of your script and may be incomplete or wrong (for example, for UDFs or other code the tool can't see into). It determines how governance tags propagate, which can restrict or open access to data. You're responsible for reviewing and maintaining it.
+
+# prompt.acceptOwnership
+
+Accept and write dataLineage to config.json?
+
+# prompt.acceptOwnershipReplace
+
+Accept and replace the existing dataLineage in config.json?
+
 # error.functionPackage
 
 Lineage can only be generated for script packages; '%s' is a function package.
@@ -118,6 +137,15 @@ dataLineage in '%s' changed while waiting for confirmation, so it was not replac
 # actions.lineageChanged
 
 - Re-run the command to compare the generated lineage against the current dataLineage.
+
+# error.ownershipNotAccepted
+
+Writing generated lineage to config.json requires accepting ownership of it.
+
+# actions.ownershipNotAccepted
+
+- Review the generated lineage, then re-run with --accept-lineage-ownership to accept responsibility for it and write it to config.json.
+- Re-run with --dry-run to preview the generated lineage without changing config.json.
 
 # error.replaceNotConfirmed
 
@@ -199,4 +227,12 @@ Replace existing dataLineage without prompting.
 
 # flags.noPrompt.description
 
-Skips the confirmation before replacing a dataLineage section that differs from the generated one. Required to replace existing lineage when running non-interactively or with --json.
+Skips the confirmation before replacing a dataLineage section that differs from the generated one. Required to replace existing lineage when running non-interactively or with --json. Doesn't accept ownership of the generated lineage; use --accept-lineage-ownership for that.
+
+# flags.acceptLineageOwnership.summary
+
+Accept responsibility for the generated lineage without prompting.
+
+# flags.acceptLineageOwnership.description
+
+Confirms that you understand the generated lineage is best-effort and may be incomplete or wrong, that it determines how governance tags propagate, and that you're responsible for reviewing and maintaining it. Skips the ownership prompt. Required to write lineage when running non-interactively or with --json.

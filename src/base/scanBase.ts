@@ -18,7 +18,12 @@ import { SfCommand } from '@salesforce/sf-plugins-core';
 import { Messages, SfError } from '@salesforce/core';
 import { executeNativeScan, type NativeScanResult } from '../utils/nativeScan.js';
 import { checkEnvironment, type EnvironmentCheckResult } from '../utils/environmentChecker.js';
-import { countEntriesReferencing, findStaleLineage, type LineagePermissionGaps } from '../utils/lineageConfig.js';
+import {
+  countEntriesReferencing,
+  findStaleLineage,
+  LINEAGE_CONFIRM_TIMEOUT_MS,
+  type LineagePermissionGaps,
+} from '../utils/lineageConfig.js';
 
 export type BaseScanFlags = {
   entrypoint?: string;
@@ -132,7 +137,11 @@ export abstract class ScanBase extends SfCommand<ScanResult> {
         messages.getMessages('actions.staleLineageNotConfirmed')
       );
     }
-    return this.confirm({ message: messages.getMessage('prompt.staleLineage'), defaultAnswer: false });
+    return this.confirm({
+      message: messages.getMessage('prompt.staleLineage'),
+      defaultAnswer: false,
+      ms: LINEAGE_CONFIRM_TIMEOUT_MS,
+    });
   }
 
   private warnStaleLineage(

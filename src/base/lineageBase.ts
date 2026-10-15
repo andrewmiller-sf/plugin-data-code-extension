@@ -28,6 +28,7 @@ import {
   hasInvalidLineage,
   hasLineageSection,
   isEmptyDiff,
+  LINEAGE_CONFIRM_TIMEOUT_MS,
   readLineage,
   replaceLineage,
   writeConfigJson,
@@ -44,6 +45,7 @@ export type BaseLineageFlags = {
   'dry-run': boolean;
   'output-file'?: string;
   'no-prompt': boolean;
+  'accept-lineage-ownership': boolean;
 };
 
 export type LineageGenerateResult = SharedResultProps & {
@@ -177,12 +179,12 @@ export abstract class LineageBase extends SfCommand<LineageGenerateResult> {
         return result;
       }
 
-      if (hasLineageSection(config) && !(await this.confirmReplace(messages, flags['no-prompt']))) {
-        this.log(messages.getMessage('info.notReplaced'));
+      if (!(await this.confirmWrite(messages, flags, hasLineageSection(config)))) {
+        this.log(messages.getMessage('info.notWritten'));
         return result;
       }
 
-      // Re-read again: the prompt can wait indefinitely. Lineage edited meanwhile wasn't in the
+      // Re-read again: the prompt can wait up to LINEAGE_CONFIRM_TIMEOUT_MS. Lineage edited meanwhile wasn't in the
       // diff the customer confirmed, so don't replace it.
       const latest = await readConfigJson(configPath);
       if (JSON.stringify(latest.dataLineage) !== shownLineage) {
@@ -223,23 +225,48 @@ export abstract class LineageBase extends SfCommand<LineageGenerateResult> {
       const lines = lineage.unresolved.map((field) => `${field.targetField} (${field.reason})`);
       this.warn(messages.getMessage('warning.unresolved', [lineage.unresolved.length, bullets(lines)]));
     }
+    if (lineage.udfFields.length > 0) {
+      this.warn(messages.getMessage('warning.udf', [lineage.udfFields.length, bullets(lineage.udfFields)]));
+    }
     const missing = [...gaps.targets.map((name) => `write: ${name}`), ...gaps.sources.map((name) => `read: ${name}`)];
     if (missing.length > 0) {
       this.warn(messages.getMessage('warning.permissionGaps', [bullets(missing)]));
     }
   }
 
-  private async confirmReplace(messages: Messages<string>, noPrompt: boolean): Promise<boolean> {
-    this.warn(messages.getMessage('warning.replace'));
-    if (noPrompt) return true;
+  // Every write needs the customer to accept ownership of the generated lineage: it is best-effort
+  // and drives governance tag propagation. Replacing an existing section also risks losing hand
+  // edits. Interactively that's one prompt for whatever the flags haven't already accepted.
+  private async confirmWrite(
+    messages: Messages<string>,
+    flags: BaseLineageFlags,
+    replacing: boolean
+  ): Promise<boolean> {
+    this.warn(messages.getMessage('warning.ownership'));
+    if (replacing) this.warn(messages.getMessage('warning.replace'));
+    const needsOwnership = !flags['accept-lineage-ownership'];
+    const needsReplace = replacing && !flags['no-prompt'];
+    if (!needsOwnership && !needsReplace) return true;
     if (this.jsonEnabled() || !process.stdin.isTTY) {
+      if (needsOwnership) {
+        throw new SfError(
+          messages.getMessage('error.ownershipNotAccepted'),
+          'LineageOwnershipNotAccepted',
+          messages.getMessages('actions.ownershipNotAccepted')
+        );
+      }
       throw new SfError(
         messages.getMessage('error.replaceNotConfirmed'),
         'LineageReplaceNotConfirmed',
         messages.getMessages('actions.replaceNotConfirmed')
       );
     }
-    return this.confirm({ message: messages.getMessage('prompt.replace'), defaultAnswer: false });
+    const prompt = needsOwnership
+      ? replacing
+        ? 'prompt.acceptOwnershipReplace'
+        : 'prompt.acceptOwnership'
+      : 'prompt.replace';
+    return this.confirm({ message: messages.getMessage(prompt), defaultAnswer: false, ms: LINEAGE_CONFIRM_TIMEOUT_MS });
   }
 
   protected abstract getCodeType(): 'script';

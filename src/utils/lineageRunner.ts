@@ -79,6 +79,8 @@ export type LineageReport = {
   dataLineage: LineageEntry[];
   unresolved: UnresolvedField[];
   noSources: string[];
+  /** Fields in `dataLineage` or `noSources` computed by a UDF; their sources may be incomplete. */
+  udfFields: string[];
   targets: string[];
   sources: string[];
   pairCount: number;

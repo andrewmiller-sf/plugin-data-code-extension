@@ -35,6 +35,7 @@ const REPORT: LineageReport = {
   ],
   unresolved: [{ targetField: 'out__dll.x__c', reason: 'untraceable source' }],
   noSources: ['out__dll.const__c'],
+  udfFields: [],
   targets: ['out__dll'],
   sources: ['in__dll'],
   pairCount: 3,
@@ -114,7 +115,12 @@ describe('data-code-extension script lineage generate', () => {
   });
 
   it('writes lineage into config.json, keeps other keys, and forwards run options', async () => {
-    const result = await LineageGenerate.run([...baseArgs(), '--dependencies', 'pandas, numpy']);
+    const result = await LineageGenerate.run([
+      ...baseArgs(),
+      '--dependencies',
+      'pandas, numpy',
+      '--accept-lineage-ownership',
+    ]);
 
     const opts = generateStub.firstCall.args[0] as Record<string, unknown>;
     expect(opts.pythonCommand).to.equal('python3');
@@ -140,6 +146,19 @@ describe('data-code-extension script lineage generate', () => {
   it('always lists unresolved fields', async () => {
     await LineageGenerate.run(baseArgs());
     expect(warnings().some((w) => w.includes('out__dll.x__c (untraceable source)'))).to.be.true;
+  });
+
+  it('lists UDF-computed fields only when a UDF was detected', async () => {
+    await LineageGenerate.run([...baseArgs(), '--dry-run']);
+    expect(warnings().some((w) => w.includes('user-defined functions'))).to.be.false;
+
+    sfCommandStubs.warn.resetHistory();
+    generateStub.resolves({ ...REPORT, udfFields: ['out__dll.const__c', 'out__dll.name__c'] });
+    await LineageGenerate.run([...baseArgs(), '--dry-run']);
+    const udfWarning = warnings().find((w) => w.includes('user-defined functions'));
+    expect(udfWarning).to.include('2 target fields');
+    expect(udfWarning).to.include('out__dll.const__c');
+    expect(udfWarning).to.include('out__dll.name__c');
   });
 
   it('warns when lineage references objects missing from permissions', async () => {
@@ -292,6 +311,68 @@ describe('data-code-extension script lineage generate', () => {
     expect(generateStub.called).to.be.false;
   });
 
+  describe('accepting lineage ownership', () => {
+    it('asks the customer to accept ownership before the first write', async () => {
+      const result = await LineageGenerate.run(baseArgs());
+      expect(confirmStub.calledOnce).to.be.true;
+      expect(confirmStub.firstCall.args[0]).to.deep.include({
+        message: 'Accept and write dataLineage to config.json?',
+        defaultAnswer: false,
+      });
+      expect(warnings().some((w) => w.includes("You're responsible for reviewing and maintaining it"))).to.be.true;
+      expect(result.written).to.equal(true);
+      expect(readConfig().dataLineage).to.deep.equal(REPORT.dataLineage);
+    });
+
+    it('does not write when the customer declines', async () => {
+      confirmStub.resolves(false);
+      const result = await LineageGenerate.run(baseArgs());
+      expect(result.written).to.equal(false);
+      expect(readConfig()).to.not.have.property('dataLineage');
+    });
+
+    it('--accept-lineage-ownership writes without asking but still shows the warning', async () => {
+      const result = await LineageGenerate.run([...baseArgs(), '--accept-lineage-ownership']);
+      expect(confirmStub.called).to.be.false;
+      expect(warnings().some((w) => w.includes('best-effort analysis'))).to.be.true;
+      expect(result.written).to.equal(true);
+    });
+
+    it('--no-prompt does not accept ownership', async () => {
+      await LineageGenerate.run([...baseArgs(), '--no-prompt']);
+      expect(confirmStub.calledOnce).to.be.true;
+    });
+
+    it('fails without --accept-lineage-ownership when not interactive', async () => {
+      process.stdin.isTTY = false;
+      try {
+        await LineageGenerate.run([...baseArgs(), '--no-prompt']);
+        expect.fail('Should have thrown');
+      } catch (error) {
+        expect((error as SfError).name).to.equal('LineageOwnershipNotAccepted');
+      }
+      expect(confirmStub.called).to.be.false;
+      expect(readConfig()).to.not.have.property('dataLineage');
+    });
+
+    it('fails with --json without --accept-lineage-ownership', async () => {
+      try {
+        await LineageGenerate.run([...baseArgs(), '--json']);
+        expect.fail('Should have thrown');
+      } catch (error) {
+        expect((error as SfError).name).to.equal('LineageOwnershipNotAccepted');
+      }
+      expect(readConfig()).to.not.have.property('dataLineage');
+    });
+
+    it('--dry-run needs no acceptance', async () => {
+      process.stdin.isTTY = false;
+      const result = await LineageGenerate.run([...baseArgs(), '--dry-run']);
+      expect(confirmStub.called).to.be.false;
+      expect(result.written).to.equal(false);
+    });
+  });
+
   describe('replacing existing lineage', () => {
     const OLD = [{ targetField: 'out__dll.old', sourceFields: ['in__dll.old'] }];
 
@@ -299,10 +380,15 @@ describe('data-code-extension script lineage generate', () => {
       writeConfig({ dataspace: 'default', permissions: PERMISSIONS, dataLineage: OLD });
     });
 
-    it('replaces after the customer confirms', async () => {
+    it('asks once to accept ownership and replace', async () => {
       const result = await LineageGenerate.run(baseArgs());
       expect(confirmStub.calledOnce).to.be.true;
-      expect(confirmStub.firstCall.args[0]).to.have.property('defaultAnswer', false);
+      expect(confirmStub.firstCall.args[0]).to.deep.include({
+        message: 'Accept and replace the existing dataLineage in config.json?',
+        defaultAnswer: false,
+        ms: 10 * 60 * 1000,
+      });
+      expect(warnings().some((w) => w.includes('best-effort analysis'))).to.be.true;
       expect(warnings().some((w) => w.includes('This replaces the existing dataLineage section'))).to.be.true;
       expect(result.written).to.equal(true);
       expect(result.diff.removed).to.deep.equal(['out__dll.old']);
@@ -316,8 +402,17 @@ describe('data-code-extension script lineage generate', () => {
       expect(readConfig().dataLineage).to.deep.equal(OLD);
     });
 
-    it('--no-prompt replaces without asking', async () => {
-      const result = await LineageGenerate.run([...baseArgs(), '--no-prompt']);
+    it('asks only about replacing once ownership is accepted', async () => {
+      await LineageGenerate.run([...baseArgs(), '--accept-lineage-ownership']);
+      expect(confirmStub.calledOnce).to.be.true;
+      expect(confirmStub.firstCall.args[0]).to.have.property(
+        'message',
+        'Replace the existing dataLineage in config.json?'
+      );
+    });
+
+    it('--accept-lineage-ownership --no-prompt replaces without asking', async () => {
+      const result = await LineageGenerate.run([...baseArgs(), '--accept-lineage-ownership', '--no-prompt']);
       expect(confirmStub.called).to.be.false;
       expect(result.written).to.equal(true);
     });
@@ -340,7 +435,7 @@ describe('data-code-extension script lineage generate', () => {
     it('fails without --no-prompt when not interactive', async () => {
       process.stdin.isTTY = false;
       try {
-        await LineageGenerate.run(baseArgs());
+        await LineageGenerate.run([...baseArgs(), '--accept-lineage-ownership']);
         expect.fail('Should have thrown');
       } catch (error) {
         expect((error as SfError).name).to.equal('LineageReplaceNotConfirmed');
@@ -351,7 +446,7 @@ describe('data-code-extension script lineage generate', () => {
 
     it('fails with --json without --no-prompt', async () => {
       try {
-        await LineageGenerate.run([...baseArgs(), '--json']);
+        await LineageGenerate.run([...baseArgs(), '--json', '--accept-lineage-ownership']);
         expect.fail('Should have thrown');
       } catch (error) {
         expect((error as SfError).name).to.equal('LineageReplaceNotConfirmed');
@@ -362,7 +457,7 @@ describe('data-code-extension script lineage generate', () => {
     it('rewrites duplicate targets even when the diff is empty', async () => {
       const duplicated = [...REPORT.dataLineage, REPORT.dataLineage[0]];
       writeConfig({ dataspace: 'default', permissions: PERMISSIONS, dataLineage: duplicated });
-      const result = await LineageGenerate.run([...baseArgs(), '--no-prompt']);
+      const result = await LineageGenerate.run([...baseArgs(), '--accept-lineage-ownership', '--no-prompt']);
       expect(result.written).to.equal(true);
       expect(readConfig().dataLineage).to.deep.equal(REPORT.dataLineage);
     });

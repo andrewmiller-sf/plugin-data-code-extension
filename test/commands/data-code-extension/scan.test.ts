@@ -313,7 +313,7 @@ describe('data-code-extension scan commands', () => {
       makeScriptPackage(SCRIPT, { dataspace: 'default', dataLineage: STALE });
       const result = await ScriptScan.run([]);
       expect(confirmStub.calledOnce).to.be.true;
-      expect(confirmStub.firstCall.args[0]).to.have.property('defaultAnswer', false);
+      expect(confirmStub.firstCall.args[0]).to.deep.include({ defaultAnswer: false, ms: 10 * 60 * 1000 });
       expect(warnings().some((w) => w.includes('write: OldDest__dll') && w.includes('1 entries'))).to.be.true;
       expect(result.executionResult.written).to.be.undefined;
       const config = readConfig();
