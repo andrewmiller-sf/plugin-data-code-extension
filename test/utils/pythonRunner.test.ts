@@ -65,20 +65,24 @@ class FakeStream implements RunnerStream {
 class FakeChild implements RunnerChild {
   public stdout: FakeStream | null = new FakeStream();
   public stderr: FakeStream | null = new FakeStream();
-  private closeListeners: Array<(code: number | null) => void> = [];
+  private closeListeners: Array<(code: number | null, signal: NodeJS.Signals | null) => void> = [];
   private errorListeners: Array<(err: Error) => void> = [];
 
-  public on(event: 'close', listener: (code: number | null) => void): this;
+  public on(event: 'close', listener: (code: number | null, signal: NodeJS.Signals | null) => void): this;
   public on(event: 'error', listener: (err: Error) => void): this;
-  public on(event: 'close' | 'error', listener: ((code: number | null) => void) | ((err: Error) => void)): this {
-    if (event === 'close') this.closeListeners.push(listener as (code: number | null) => void);
-    else this.errorListeners.push(listener as (err: Error) => void);
+  public on(
+    event: 'close' | 'error',
+    listener: ((code: number | null, signal: NodeJS.Signals | null) => void) | ((err: Error) => void)
+  ): this {
+    if (event === 'close') {
+      this.closeListeners.push(listener as (code: number | null, signal: NodeJS.Signals | null) => void);
+    } else this.errorListeners.push(listener as (err: Error) => void);
     return this;
   }
 
   /** Test helper: fire the process 'close' event. */
-  public emitClose(code: number | null): void {
-    for (const listener of this.closeListeners) listener(code);
+  public emitClose(code: number | null, signal: NodeJS.Signals | null = null): void {
+    for (const listener of this.closeListeners) listener(code, signal);
   }
 
   /** Test helper: fire the process 'error' event (failure to spawn). */
@@ -294,6 +298,18 @@ describe('pythonRunner', () => {
 
       expect(error.name).to.equal('RunExecutionFailed');
       expect(error.message).to.include('3');
+    });
+
+    it('rejects with RunTerminated when a signal stopped the process (e.g. the timeout)', async () => {
+      const child = new FakeChild();
+      const promise = runEntrypoint(makeOpts({ timeoutMs: 300_000 }), { spawn: fakeSpawn(child, []) });
+
+      child.emitClose(null, 'SIGTERM');
+      const error = await expectReject(promise);
+
+      expect(error.name).to.equal('RunTerminated');
+      expect(error.message).to.include('SIGTERM');
+      expect(error.message).to.include('300 seconds');
     });
 
     it('rejects with RunAuthenticationFailed when stderr signals an auth problem', async () => {

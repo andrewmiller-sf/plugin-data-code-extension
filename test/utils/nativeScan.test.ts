@@ -17,6 +17,7 @@ import { promises as fs } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { expect } from 'chai';
+import { type SfError } from '@salesforce/core';
 import {
   setPipreqsMock,
   executeNativeScan,
@@ -684,6 +685,100 @@ describe('nativeScan: executeNativeScan', () => {
     expect(result.config.entryPoint).to.equal('entrypoint.py');
     expect(result.config.permissions).to.be.undefined;
     expect(result.config.dataspace).to.be.undefined;
+    await fs.rm(dir, { recursive: true, force: true });
+  });
+});
+
+describe('nativeScan: executeNativeScan confirmWrite', () => {
+  const ENTRYPOINT =
+    'from datacustomcode.client import Client\n' +
+    'def main():\n' +
+    '    c.read_dlo("Source__dll")\n' +
+    '    c.write_to_dlo("Dest__dll", df)\n';
+
+  beforeEach(() => {
+    setPipreqsMock(async () => 'pandas\n');
+  });
+
+  afterEach(() => {
+    setPipreqsMock(null);
+  });
+
+  it('omits written when confirmWrite is not supplied', async () => {
+    const dir = await makePackage({ entrypoint: ENTRYPOINT });
+    const result = await executeNativeScan({ workingDir: dir, packageType: 'script' });
+    expect(result).not.to.have.property('written');
+    await fs.rm(dir, { recursive: true, force: true });
+  });
+
+  it('writes when confirmWrite resolves true, passing the updated config', async () => {
+    const dir = await makePackage({ entrypoint: ENTRYPOINT });
+    let seen: Record<string, unknown> | undefined;
+    const result = await executeNativeScan({
+      workingDir: dir,
+      packageType: 'script',
+      confirmWrite: async (config) => {
+        seen = config;
+        return true;
+      },
+    });
+    expect(seen).to.equal(result.config);
+    expect(result).not.to.have.property('written');
+    expect(result.requirementsPath).to.equal(path.join(dir, 'requirements.txt'));
+    await fs.rm(dir, { recursive: true, force: true });
+  });
+
+  it('writes nothing when confirmWrite resolves false', async () => {
+    const dir = await makePackage({ entrypoint: ENTRYPOINT });
+    const before = await fs.readFile(path.join(dir, 'payload', 'config.json'), 'utf8');
+    const result = await executeNativeScan({ workingDir: dir, packageType: 'script', confirmWrite: async () => false });
+    expect(result.written).to.equal(false);
+    expect(result.requirementsPath).to.be.undefined;
+    expect(await fs.readFile(path.join(dir, 'payload', 'config.json'), 'utf8')).to.equal(before);
+    await fs.rm(dir, { recursive: true, force: true });
+  });
+
+  it('refuses to write when config.json changes while confirmWrite waits', async () => {
+    const dir = await makePackage({ entrypoint: ENTRYPOINT });
+    const configPath = path.join(dir, 'payload', 'config.json');
+    const edited = JSON.stringify({ dataspace: 'edited', dataLineage: { 'Dest.dll': { Id: ['Source.Id'] } } });
+    try {
+      await executeNativeScan({
+        workingDir: dir,
+        packageType: 'script',
+        confirmWrite: async () => {
+          await fs.writeFile(configPath, edited);
+          return true;
+        },
+      });
+      expect.fail('Should have thrown');
+    } catch (error) {
+      expect((error as SfError).name).to.equal('ScanConfigChangedDuringConfirm');
+    }
+    expect(await fs.readFile(configPath, 'utf8')).to.equal(edited);
+    let requirementsExists = true;
+    try {
+      await fs.access(path.join(dir, 'requirements.txt'));
+    } catch {
+      requirementsExists = false;
+    }
+    expect(requirementsExists).to.be.false;
+    await fs.rm(dir, { recursive: true, force: true });
+  });
+
+  it('never calls confirmWrite on dry run', async () => {
+    const dir = await makePackage({ entrypoint: ENTRYPOINT });
+    let called = false;
+    await executeNativeScan({
+      workingDir: dir,
+      packageType: 'script',
+      dryRun: true,
+      confirmWrite: async () => {
+        called = true;
+        return true;
+      },
+    });
+    expect(called).to.be.false;
     await fs.rm(dir, { recursive: true, force: true });
   });
 });

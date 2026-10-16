@@ -15,15 +15,22 @@
  */
 import path from 'node:path';
 import { SfCommand } from '@salesforce/sf-plugins-core';
-import { Messages } from '@salesforce/core';
+import { Messages, SfError } from '@salesforce/core';
 import { executeNativeScan, type NativeScanResult } from '../utils/nativeScan.js';
 import { checkEnvironment, type EnvironmentCheckResult } from '../utils/environmentChecker.js';
+import {
+  countEntriesReferencing,
+  findStaleLineage,
+  LINEAGE_CONFIRM_TIMEOUT_MS,
+  type LineagePermissionGaps,
+} from '../utils/lineageConfig.js';
 
 export type BaseScanFlags = {
   entrypoint?: string;
   'config-file'?: string;
   'dry-run': boolean;
   'no-requirements': boolean;
+  'no-prompt'?: boolean;
 };
 
 export type ScanResult = {
@@ -56,8 +63,28 @@ export abstract class ScanBase extends SfCommand<ScanResult> {
         dryRun: flags['dry-run'],
         noRequirements: flags['no-requirements'],
         packageType: codeType,
+        // Functions carry no permissions or dataLineage, so only scripts can go stale.
+        confirmWrite:
+          codeType === 'script'
+            ? (updatedConfig): Promise<boolean> =>
+                this.confirmStaleLineage(messages, updatedConfig, flags['no-prompt'] ?? false)
+            : undefined,
       });
       this.spinner.stop();
+
+      if (codeType === 'script' && executionResult.dryRun) {
+        const stale = findStaleLineage(executionResult.config);
+        if (hasStaleLineage(stale)) this.warnStaleLineage(messages, executionResult.config, stale);
+      }
+
+      // Exit non-zero so a following deploy doesn't ship the old permissions.
+      if (executionResult.written === false) {
+        throw new SfError(
+          messages.getMessage('error.staleLineageNotWritten'),
+          'ScanStaleLineageNotWritten',
+          messages.getMessages('actions.staleLineageNotConfirmed')
+        );
+      }
 
       this.log(messages.getMessage('info.scanExecuted', [workingDir]));
 
@@ -92,6 +119,55 @@ export abstract class ScanBase extends SfCommand<ScanResult> {
     }
   }
 
+  /**
+   * Called just before scan writes config.json. When the rebuilt permissions no longer
+   * cover objects that dataLineage references, warn and ask before writing; scan never
+   * edits dataLineage itself.
+   */
+  private async confirmStaleLineage(
+    messages: Messages<string>,
+    updatedConfig: Record<string, unknown>,
+    noPrompt: boolean
+  ): Promise<boolean> {
+    const stale = findStaleLineage(updatedConfig);
+    if (!hasStaleLineage(stale)) return true;
+
+    this.spinner.stop();
+    this.warnStaleLineage(messages, updatedConfig, stale);
+    if (noPrompt) return true;
+    if (this.jsonEnabled() || !process.stdin.isTTY) {
+      throw new SfError(
+        messages.getMessage('error.staleLineageNotConfirmed'),
+        'ScanStaleLineageNotConfirmed',
+        messages.getMessages('actions.staleLineageNotConfirmed')
+      );
+    }
+    return this.confirm({
+      message: messages.getMessage('prompt.staleLineage'),
+      defaultAnswer: false,
+      ms: LINEAGE_CONFIRM_TIMEOUT_MS,
+    });
+  }
+
+  private warnStaleLineage(
+    messages: Messages<string>,
+    config: Record<string, unknown>,
+    stale: LineagePermissionGaps
+  ): void {
+    const objects = [...new Set([...stale.targets, ...stale.sources])];
+    const lines = [...stale.targets.map((name) => `write: ${name}`), ...stale.sources.map((name) => `read: ${name}`)];
+    this.warn(
+      messages.getMessage('warning.staleLineage', [
+        countEntriesReferencing(config, objects),
+        lines.map((line) => `  - ${line}`).join('\n'),
+      ])
+    );
+  }
+
   protected abstract getCodeType(): 'script' | 'function';
   protected abstract getMessages(): Messages<string>;
+}
+
+function hasStaleLineage(stale: LineagePermissionGaps): boolean {
+  return stale.targets.length > 0 || stale.sources.length > 0;
 }

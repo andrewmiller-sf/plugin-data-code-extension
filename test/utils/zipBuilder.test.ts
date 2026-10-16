@@ -334,9 +334,10 @@ describe('zipBuilder.prepareDependencyArchive', () => {
       },
       async run(args) {
         calls.run.push({ args });
-        // The dockerRunCmd shape is `['run', '--rm', '-v', '<mount>:/workspace', ...]`
+        // The dockerRunCmd shape is `['run', '--rm', '-v', '<mount>:/workspace', ...]`. Strip only the
+        // container suffix: on Windows the mount itself has a drive colon (`C:/...`).
         const mountArg = args[args.indexOf('-v') + 1];
-        const [mountPath] = mountArg.split(':');
+        const mountPath = mountArg.slice(0, mountArg.lastIndexOf(':'));
         opts.onRun?.(mountPath);
       },
     };

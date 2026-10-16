@@ -92,7 +92,7 @@ export type RunnerStream = {
 export type RunnerChild = {
   stdout: RunnerStream | null;
   stderr: RunnerStream | null;
-  on(event: 'close', listener: (code: number | null) => void): unknown;
+  on(event: 'close', listener: (code: number | null, signal: NodeJS.Signals | null) => void): unknown;
   on(event: 'error', listener: (err: Error) => void): unknown;
 };
 export type SpawnFn = (
@@ -147,6 +147,14 @@ function mapRunFailure(exitCode: number, stderr: string, sfCliOrg?: string): SfE
   );
 }
 
+export function mapRunTerminated(signal: NodeJS.Signals | null, timeoutMs: number): SfError {
+  return new SfError(
+    messages.getMessage('error.runTerminated', [signal ?? 'unknown', Math.round(timeoutMs / 1000)]),
+    'RunTerminated',
+    messages.getMessages('actions.runTerminated')
+  );
+}
+
 function mapProcessStartError(err: Error, pythonCommand: string): SfError {
   return new SfError(
     messages.getMessage('error.runProcessStartFailed', [pythonCommand, err.message]),
@@ -155,22 +163,35 @@ function mapProcessStartError(err: Error, pythonCommand: string): SfError {
   );
 }
 
+/** Options for {@link runPythonProgram}: everything but the program itself is shared with `run`. */
+export type PythonProgramOptions = {
+  pythonCommand: string;
+  /** Interpreter arguments, e.g. `['-c', SHIM, payloadJson]`. */
+  args: readonly string[];
+  /** SF CLI org username/alias, named in the authentication-failure message. */
+  sfCliOrg?: string;
+  timeoutMs?: number;
+  onStdout?: (chunk: string) => void;
+  onStderr?: (chunk: string) => void;
+  /** Checked before the default failure mapping; return undefined to fall through to it. */
+  mapExitCode?: (exitCode: number, stderr: string) => SfError | undefined;
+};
+
 /**
- * Run a package's entrypoint through the SDK's `run_entrypoint`, streaming output
- * live. Resolves with the accumulated stdout/stderr on a clean exit; rejects with a
- * friendly {@link SfError} on non-zero exit or a failure to start the interpreter.
+ * Spawn the interpreter with `opts.args`, streaming output live. Resolves with the
+ * accumulated stdout/stderr on a clean exit; rejects with a friendly {@link SfError}
+ * on non-zero exit or a failure to start the interpreter.
  */
-export async function runEntrypoint(
-  opts: PythonRunOptions,
+export async function runPythonProgram(
+  opts: PythonProgramOptions,
   deps: PythonRunnerDeps = { spawn: defaultSpawn }
 ): Promise<PythonRunResult> {
-  const payload = buildRunPayload(opts);
-  const args = ['-c', RUN_ENTRYPOINT_SHIM, JSON.stringify(payload)];
-  debug('run spawn: %s %o', opts.pythonCommand, args);
+  debug('run spawn: %s %o', opts.pythonCommand, opts.args);
 
+  const timeoutMs = opts.timeoutMs ?? RUN_TIMEOUT_MS;
   return new Promise<PythonRunResult>((resolve, reject) => {
-    const child = deps.spawn(opts.pythonCommand, args, {
-      timeout: opts.timeoutMs ?? RUN_TIMEOUT_MS,
+    const child = deps.spawn(opts.pythonCommand, opts.args, {
+      timeout: timeoutMs,
       // PYTHONUNBUFFERED so the entrypoint's prints stream immediately instead of buffering.
       env: { ...process.env, PYTHONUNBUFFERED: '1' },
     });
@@ -194,16 +215,46 @@ export async function runEntrypoint(
       reject(mapProcessStartError(err, opts.pythonCommand));
     });
 
-    child.on('close', (code: number | null) => {
-      const exitCode = code ?? 0;
+    child.on('close', (code: number | null, signal: NodeJS.Signals | null) => {
+      // No exit code means a signal stopped the run: the timeout, an OOM kill, or the user.
+      if (code === null) {
+        debug('run killed by signal: %s', signal);
+        reject(mapRunTerminated(signal, timeoutMs));
+        return;
+      }
+      const exitCode = code;
       debug('run exit code: %d', exitCode);
       if (exitCode === 0) {
         resolve({ stdout: stdout.trim(), stderr: stderr.trim(), exitCode });
       } else {
-        reject(mapRunFailure(exitCode, stderr.trim(), opts.sfCliOrg));
+        const trimmed = stderr.trim();
+        reject(opts.mapExitCode?.(exitCode, trimmed) ?? mapRunFailure(exitCode, trimmed, opts.sfCliOrg));
       }
     });
   });
+}
+
+/**
+ * Run a package's entrypoint through the SDK's `run_entrypoint`, streaming output
+ * live. Resolves with the accumulated stdout/stderr on a clean exit; rejects with a
+ * friendly {@link SfError} on non-zero exit or a failure to start the interpreter.
+ */
+export async function runEntrypoint(
+  opts: PythonRunOptions,
+  deps: PythonRunnerDeps = { spawn: defaultSpawn }
+): Promise<PythonRunResult> {
+  const payload = buildRunPayload(opts);
+  return runPythonProgram(
+    {
+      pythonCommand: opts.pythonCommand,
+      args: ['-c', RUN_ENTRYPOINT_SHIM, JSON.stringify(payload)],
+      sfCliOrg: opts.sfCliOrg,
+      timeoutMs: opts.timeoutMs,
+      onStdout: opts.onStdout,
+      onStderr: opts.onStderr,
+    },
+    deps
+  );
 }
 
 /**

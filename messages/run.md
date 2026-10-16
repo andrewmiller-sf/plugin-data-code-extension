@@ -98,6 +98,15 @@ Authentication with Salesforce org '%s' failed while running the package.
 - Confirm the org alias or username passed to --target-org is correct.
 - Verify the org has Data Cloud enabled and your user has the required permissions.
 
+# error.runTerminated
+
+The package run was stopped by signal %s before it finished. Runs time out after %s seconds.
+
+# actions.runTerminated
+
+- If the run timed out, reduce the data it processes (for example, the reader's default_row_limit in an SDK config file) or check for a step that hangs, such as a network call.
+- If the process ran out of memory or was stopped by another program, free resources and try again.
+
 # error.runProcessStartFailed
 
 Could not start the Python interpreter '%s': %s
@@ -149,8 +158,8 @@ Optional path to a JSON config file that provides input payload for the run. Def
 
 # flags.dependencies.summary
 
-Dependencies override for the run.
+Modules to import before the run.
 
 # flags.dependencies.description
 
-Optional comma-separated list of Python package dependencies to use during the run, overriding those defined in the package's requirements.txt.
+Optional comma-separated list of Python modules (or module.attribute) to import before the entrypoint runs. Use import names, such as 'yaml' rather than 'pyyaml'. Nothing is installed: each module must already be installed in the active Python environment.

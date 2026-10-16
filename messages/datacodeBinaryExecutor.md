@@ -18,6 +18,14 @@ Entrypoint file not found at '%s'.
 - Run 'init' first if the package has not been initialized
 - Use the default entrypoint path: payload/entrypoint.py
 
+# error.scanConfigChanged
+
+'%s' changed while waiting for confirmation, so the scan results were not written.
+
+# actions.scanConfigChanged
+
+- Re-run the scan so it starts from the current config.json.
+
 # error.zipExecutionFailed
 
 Failed to create archive for package at '%s': %s
