@@ -21,6 +21,8 @@ import {
   buildLineagePayload,
   generateLineage,
   GENERATE_LINEAGE_SHIM,
+  LINEAGE_TERMINATED_EXIT_CODE,
+  LINEAGE_TERMINATED_MARKER,
   LINEAGE_UNAVAILABLE_EXIT_CODE,
   LINEAGE_UNAVAILABLE_MARKER,
   parseLineageReport,
@@ -59,19 +61,23 @@ class FakeStream implements RunnerStream {
 class FakeChild implements RunnerChild {
   public stdout = new FakeStream();
   public stderr = new FakeStream();
-  private closeListeners: Array<(code: number | null) => void> = [];
+  private closeListeners: Array<(code: number | null, signal: NodeJS.Signals | null) => void> = [];
   private errorListeners: Array<(err: Error) => void> = [];
 
-  public on(event: 'close', listener: (code: number | null) => void): this;
+  public on(event: 'close', listener: (code: number | null, signal: NodeJS.Signals | null) => void): this;
   public on(event: 'error', listener: (err: Error) => void): this;
-  public on(event: 'close' | 'error', listener: ((code: number | null) => void) | ((err: Error) => void)): this {
-    if (event === 'close') this.closeListeners.push(listener as (code: number | null) => void);
-    else this.errorListeners.push(listener as (err: Error) => void);
+  public on(
+    event: 'close' | 'error',
+    listener: ((code: number | null, signal: NodeJS.Signals | null) => void) | ((err: Error) => void)
+  ): this {
+    if (event === 'close') {
+      this.closeListeners.push(listener as (code: number | null, signal: NodeJS.Signals | null) => void);
+    } else this.errorListeners.push(listener as (err: Error) => void);
     return this;
   }
 
-  public emitClose(code: number | null): void {
-    for (const listener of this.closeListeners) listener(code);
+  public emitClose(code: number | null, signal: NodeJS.Signals | null = null): void {
+    for (const listener of this.closeListeners) listener(code, signal);
   }
 
   public emitError(err: Error): void {
@@ -160,6 +166,16 @@ describe('lineageRunner', () => {
     it('exits with the dedicated code and marker when the SDK lacks lineage', () => {
       expect(GENERATE_LINEAGE_SHIM).to.include(`sys.exit(${LINEAGE_UNAVAILABLE_EXIT_CODE})`);
       expect(GENERATE_LINEAGE_SHIM).to.include(LINEAGE_UNAVAILABLE_MARKER);
+    });
+
+    it('turns SIGTERM into SystemExit so subprocess.run stops the SDK worker', () => {
+      expect(GENERATE_LINEAGE_SHIM).to.include('signal.signal(signal.SIGTERM, _terminated)');
+      expect(GENERATE_LINEAGE_SHIM).to.include(`sys.exit(${LINEAGE_TERMINATED_EXIT_CODE})`);
+      expect(GENERATE_LINEAGE_SHIM).to.include(LINEAGE_TERMINATED_MARKER);
+      // The handler must be installed before the SDK (and its worker) starts.
+      expect(GENERATE_LINEAGE_SHIM.indexOf('signal.signal(')).to.be.lessThan(
+        GENERATE_LINEAGE_SHIM.indexOf('generate_lineage(')
+      );
     });
   });
 
@@ -263,6 +279,31 @@ describe('lineageRunner', () => {
           spawn: fakeSpawn([], (child) => {
             child.stderr.push('SystemExit: 3');
             child.emitClose(LINEAGE_UNAVAILABLE_EXIT_CODE);
+          }),
+        })
+      );
+      expect(err.name).to.equal('RunExecutionFailed');
+    });
+
+    it('maps the terminated exit code to RunTerminated with the timeout', async () => {
+      const err = await expectReject(
+        generateLineage(makeOpts({ timeoutMs: 60_000 }), {
+          spawn: fakeSpawn([], (child) => {
+            child.stderr.push(`${LINEAGE_TERMINATED_MARKER}\n`);
+            child.emitClose(LINEAGE_TERMINATED_EXIT_CODE);
+          }),
+        })
+      );
+      expect(err.name).to.equal('RunTerminated');
+      expect(err.message).to.include('60 seconds');
+    });
+
+    it("does not mistake a script's own exit code 143 for the timeout", async () => {
+      const err = await expectReject(
+        generateLineage(makeOpts(), {
+          spawn: fakeSpawn([], (child) => {
+            child.stderr.push('SystemExit: 143');
+            child.emitClose(LINEAGE_TERMINATED_EXIT_CODE);
           }),
         })
       );

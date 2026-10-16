@@ -77,17 +77,13 @@ export abstract class ScanBase extends SfCommand<ScanResult> {
         if (hasStaleLineage(stale)) this.warnStaleLineage(messages, executionResult.config, stale);
       }
 
+      // Exit non-zero so a following deploy doesn't ship the old permissions.
       if (executionResult.written === false) {
-        this.log(messages.getMessage('info.staleLineageNotWritten'));
-        return {
-          success: false,
-          pythonInfo,
-          packageInfo,
-          codeType,
-          workingDirectory: workingDir,
-          executionResult,
-          message: messages.getMessage('info.staleLineageNotWritten'),
-        };
+        throw new SfError(
+          messages.getMessage('error.staleLineageNotWritten'),
+          'ScanStaleLineageNotWritten',
+          messages.getMessages('actions.staleLineageNotConfirmed')
+        );
       }
 
       this.log(messages.getMessage('info.scanExecuted', [workingDir]));

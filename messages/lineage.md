@@ -4,7 +4,7 @@ Generate field-level dataLineage for a Data Code Extension %s package.
 
 # description
 
-Runs the package's entrypoint against a Salesforce org with every write intercepted, traces each written field back to the fields it was computed from, and replaces the dataLineage section of the package's config.json with the result. Nothing is written to Data Cloud. Run 'scan' first so the read and write permissions in config.json are current. Fields whose lineage can't be traced are listed and get no lineage unless you add entries by hand.
+Runs the package's entrypoint against a Salesforce org with its Data Cloud writes intercepted, traces each written field back to the fields it was computed from, and replaces the dataLineage section of the package's config.json with the result. Nothing is written to Data Cloud objects, but other calls the script makes still run for real with the org's credentials, including named credential requests, LLM gateway calls, and Einstein predictions. Streaming scripts aren't supported. Run 'scan' first so the read and write permissions in config.json are current. Fields whose lineage can't be traced are listed and get no lineage unless you add entries by hand.
 
 Generated lineage is a best-effort analysis of your script and may be incomplete or wrong (for example, for UDFs or other code the tool can't see into). It determines how governance tags propagate, which can restrict or open access to data. You're responsible for reviewing and maintaining it. Before config.json is written, you must accept this, either at the prompt or with --accept-lineage-ownership.
 
@@ -48,11 +48,21 @@ Successfully authenticated with org '%s'
 
 # info.generating
 
-Running package to trace lineage. Nothing is written to Data Cloud...
+Running package to trace lineage. Data Cloud writes are intercepted; other external calls the script makes still run...
 
 # info.summary
 
 Generated %s dataLineage entries with %s (target, source) field pairs: +%s added, -%s removed, ~%s changed.
+
+# info.removed
+
+Entries in config.json that the generated lineage drops:
+%s
+
+# info.changed
+
+Entries in config.json whose source fields the generated lineage changes:
+%s
 
 # info.noSources
 
@@ -95,12 +105,16 @@ Lineage generation completed successfully!
 
 # warning.permissionGaps
 
-The generated lineage references objects that aren't in config.json permissions, so deploy would fail (1041/1042). Run 'data-code-extension script scan' first, then generate lineage again.
+The generated lineage references objects that aren't in config.json permissions, so deploy would fail (1041/1042). Run 'data-code-extension script scan' first, then generate lineage again. Scan can't detect objects whose names your script builds at run time; add those to permissions in config.json by hand.
 %s
 
 # warning.emptyResult
 
 No lineage could be generated, so config.json was not modified. The package follows the no-lineage path unless you add dataLineage entries by hand.
+
+# warning.emptyResultExisting
+
+No lineage could be generated, so config.json was not modified. Its existing %s dataLineage entries still apply and are deployed with the package. Review or remove them in '%s'.
 
 # warning.replace
 
@@ -125,6 +139,14 @@ Accept and replace the existing dataLineage in config.json?
 # error.functionPackage
 
 Lineage can only be generated for script packages; '%s' is a function package.
+
+# error.streamingPackage
+
+Lineage can't be generated for streaming scripts; '%s' has a streamingSource in config.json.
+
+# error.configUnwritable
+
+Can't write '%s': %s
 
 # error.outputFileCollision
 
@@ -152,8 +174,8 @@ Writing generated lineage to config.json requires accepting ownership of it.
 
 # actions.ownershipNotAccepted
 
-- Review the generated lineage, then re-run with --accept-lineage-ownership to accept responsibility for it and write it to config.json.
-- Re-run with --dry-run to preview the generated lineage without changing config.json.
+- Re-run with --accept-lineage-ownership to accept responsibility for the generated lineage and write it to config.json.
+- Re-run with --dry-run to preview the generated lineage, or check it against config.json, without writing.
 
 # error.replaceNotConfirmed
 
@@ -162,7 +184,7 @@ config.json already has a different dataLineage section, and replacing it needs 
 # actions.replaceNotConfirmed
 
 - Re-run with --no-prompt to replace the existing dataLineage.
-- Re-run with --dry-run to preview the generated lineage without changing config.json.
+- Re-run with --dry-run to preview the generated lineage, or check it against config.json, without writing.
 
 # error.sdkTooOld
 
@@ -203,7 +225,7 @@ Target Salesforce org to read data from.
 
 # flags.targetOrg.description
 
-The alias or username of the Salesforce org whose data the package reads while lineage is traced. The org must have Data Cloud enabled and appropriate permissions. Nothing is written to the org.
+The alias or username of the Salesforce org whose data the package reads while lineage is traced. The org must have Data Cloud enabled and appropriate permissions. Nothing is written to Data Cloud objects in the org, but other calls the script makes, such as named credential requests, LLM gateway calls, and Einstein predictions, still run against it.
 
 # flags.configFile.summary
 
@@ -215,11 +237,11 @@ Optional path to an SDK config.yaml that overrides the reader and writer configu
 
 # flags.dependencies.summary
 
-Dependencies override for the run.
+Modules to import before the run.
 
 # flags.dependencies.description
 
-Optional comma-separated list of Python package dependencies to use during the run, overriding those defined in the package's requirements.txt.
+Optional comma-separated list of Python modules (or module.attribute) to import before the entrypoint runs. Use import names, such as 'yaml' rather than 'pyyaml'. Nothing is installed: each module must already be installed in the active Python environment.
 
 # flags.dryRun.summary
 
@@ -243,7 +265,7 @@ Replace existing dataLineage without prompting.
 
 # flags.noPrompt.description
 
-Skips the confirmation before replacing a dataLineage section that differs from the generated one. Required to replace existing lineage when running non-interactively or with --json. Doesn't accept ownership of the generated lineage; use --accept-lineage-ownership for that.
+Skips the confirmation before replacing a dataLineage section that differs from the generated one. Required when running non-interactively or with --json and config.json already has dataLineage; checked before the run. Doesn't accept ownership of the generated lineage; use --accept-lineage-ownership for that.
 
 # flags.acceptLineageOwnership.summary
 
@@ -251,4 +273,4 @@ Accept responsibility for the generated lineage without prompting.
 
 # flags.acceptLineageOwnership.description
 
-Confirms that you understand the generated lineage is best-effort and may be incomplete or wrong, that it determines how governance tags propagate, and that you're responsible for reviewing and maintaining it. Skips the ownership prompt. Required to write lineage when running non-interactively or with --json.
+Confirms that you understand the generated lineage is best-effort and may be incomplete or wrong, that it determines how governance tags propagate, and that you're responsible for reviewing and maintaining it. Skips the ownership prompt. Required when running non-interactively or with --json, unless you use --dry-run; checked before the run.

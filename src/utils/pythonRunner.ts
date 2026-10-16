@@ -92,7 +92,7 @@ export type RunnerStream = {
 export type RunnerChild = {
   stdout: RunnerStream | null;
   stderr: RunnerStream | null;
-  on(event: 'close', listener: (code: number | null) => void): unknown;
+  on(event: 'close', listener: (code: number | null, signal: NodeJS.Signals | null) => void): unknown;
   on(event: 'error', listener: (err: Error) => void): unknown;
 };
 export type SpawnFn = (
@@ -147,6 +147,14 @@ function mapRunFailure(exitCode: number, stderr: string, sfCliOrg?: string): SfE
   );
 }
 
+export function mapRunTerminated(signal: NodeJS.Signals | null, timeoutMs: number): SfError {
+  return new SfError(
+    messages.getMessage('error.runTerminated', [signal ?? 'unknown', Math.round(timeoutMs / 1000)]),
+    'RunTerminated',
+    messages.getMessages('actions.runTerminated')
+  );
+}
+
 function mapProcessStartError(err: Error, pythonCommand: string): SfError {
   return new SfError(
     messages.getMessage('error.runProcessStartFailed', [pythonCommand, err.message]),
@@ -180,9 +188,10 @@ export async function runPythonProgram(
 ): Promise<PythonRunResult> {
   debug('run spawn: %s %o', opts.pythonCommand, opts.args);
 
+  const timeoutMs = opts.timeoutMs ?? RUN_TIMEOUT_MS;
   return new Promise<PythonRunResult>((resolve, reject) => {
     const child = deps.spawn(opts.pythonCommand, opts.args, {
-      timeout: opts.timeoutMs ?? RUN_TIMEOUT_MS,
+      timeout: timeoutMs,
       // PYTHONUNBUFFERED so the entrypoint's prints stream immediately instead of buffering.
       env: { ...process.env, PYTHONUNBUFFERED: '1' },
     });
@@ -206,8 +215,14 @@ export async function runPythonProgram(
       reject(mapProcessStartError(err, opts.pythonCommand));
     });
 
-    child.on('close', (code: number | null) => {
-      const exitCode = code ?? 0;
+    child.on('close', (code: number | null, signal: NodeJS.Signals | null) => {
+      // No exit code means a signal stopped the run: the timeout, an OOM kill, or the user.
+      if (code === null) {
+        debug('run killed by signal: %s', signal);
+        reject(mapRunTerminated(signal, timeoutMs));
+        return;
+      }
+      const exitCode = code;
       debug('run exit code: %d', exitCode);
       if (exitCode === 0) {
         resolve({ stdout: stdout.trim(), stderr: stderr.trim(), exitCode });

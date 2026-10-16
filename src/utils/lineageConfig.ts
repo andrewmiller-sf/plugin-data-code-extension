@@ -152,9 +152,9 @@ export function countEntriesReferencing(config: Record<string, unknown>, objects
   ).length;
 }
 
-/** Write config.json with a 2-space indent and a trailing newline. */
+/** Write config.json with a 2-space indent and no trailing newline, as scan and init do. */
 export async function writeConfigJson(configPath: string, config: Record<string, unknown>): Promise<void> {
-  await fs.writeFile(configPath, `${JSON.stringify(config, null, 2)}\n`, 'utf8');
+  await fs.writeFile(configPath, JSON.stringify(config, null, 2), 'utf8');
 }
 
 function objectOf(field: string): string {

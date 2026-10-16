@@ -119,9 +119,9 @@ dataLineage references objects that are no longer in permissions (%s entries aff
 
 Write the updated permissions to config.json anyway?
 
-# info.staleLineageNotWritten
+# error.staleLineageNotWritten
 
-No files were modified. Update dataLineage, then scan again.
+The updated permissions weren't confirmed, so no files were modified. Update dataLineage, then scan again.
 
 # error.staleLineageNotConfirmed
 

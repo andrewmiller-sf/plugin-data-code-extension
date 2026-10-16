@@ -190,12 +190,12 @@ describe('lineageConfig', () => {
     });
   });
 
-  it('writeConfigJson writes 2-space JSON with a trailing newline', async () => {
+  it('writeConfigJson writes 2-space JSON without a trailing newline, as scan does', async () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'test-lineage-config-'));
     try {
       const file = path.join(dir, 'config.json');
       await writeConfigJson(file, { a: [1] });
-      expect(fs.readFileSync(file, 'utf8')).to.equal('{\n  "a": [\n    1\n  ]\n}\n');
+      expect(fs.readFileSync(file, 'utf8')).to.equal('{\n  "a": [\n    1\n  ]\n}');
     } finally {
       fs.rmSync(dir, { recursive: true, force: true });
     }

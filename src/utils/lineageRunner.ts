@@ -16,8 +16,17 @@
 import { promises as fs } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { debuglog } from 'node:util';
 import { Messages, SfError } from '@salesforce/core';
-import { DEFAULT_PROFILE, runPythonProgram, type PythonRunnerDeps } from './pythonRunner.js';
+import {
+  DEFAULT_PROFILE,
+  mapRunTerminated,
+  RUN_TIMEOUT_MS,
+  runPythonProgram,
+  type PythonRunnerDeps,
+} from './pythonRunner.js';
+
+const debug = debuglog('datacustomcode');
 
 Messages.importMessagesDirectoryFromMetaUrl(import.meta.url);
 const messages = Messages.loadMessages('@salesforce/plugin-data-code-extension', 'lineage');
@@ -27,6 +36,11 @@ export const LINEAGE_UNAVAILABLE_EXIT_CODE = 3;
 /** Printed to stderr alongside {@link LINEAGE_UNAVAILABLE_EXIT_CODE}, so a script's own `sys.exit(3)` isn't mistaken for it. */
 export const LINEAGE_UNAVAILABLE_MARKER = 'DATACUSTOMCODE_LINEAGE_UNAVAILABLE';
 
+/** Exit code the shim uses when SIGTERM (the run timeout) stopped it: 128 + SIGTERM. */
+export const LINEAGE_TERMINATED_EXIT_CODE = 143;
+/** Printed to stderr alongside {@link LINEAGE_TERMINATED_EXIT_CODE}. */
+export const LINEAGE_TERMINATED_MARKER = 'DATACUSTOMCODE_LINEAGE_TERMINATED';
+
 /**
  * The Python program executed via `python -c`. It calls the SDK *library's*
  * `datacustomcode.lineage.generate_lineage`, which runs the entrypoint against the
@@ -35,9 +49,17 @@ export const LINEAGE_UNAVAILABLE_MARKER = 'DATACUSTOMCODE_LINEAGE_UNAVAILABLE';
  * Arguments arrive as a single JSON object in `sys.argv[1]`, never interpolated into
  * this source. The result goes to `resultFile` rather than stdout, because the
  * customer's script prints freely to stdout.
+ *
+ * The SDK runs the entrypoint in a worker process that shares this one's stdio, so
+ * SIGTERM (the run timeout) must stop it too, or the CLI waits on its open pipes.
+ * Raising SystemExit inside `subprocess.run` makes it kill the worker.
  */
 export const GENERATE_LINEAGE_SHIM = [
-  'import importlib.util, json, sys',
+  'import importlib.util, json, signal, sys',
+  'def _terminated(*_):',
+  `    sys.stderr.write("${LINEAGE_TERMINATED_MARKER}\\n")`,
+  `    sys.exit(${LINEAGE_TERMINATED_EXIT_CODE})`,
+  'signal.signal(signal.SIGTERM, _terminated)',
   'if importlib.util.find_spec("datacustomcode.lineage") is None:',
   `    sys.stderr.write("${LINEAGE_UNAVAILABLE_MARKER}\\n")`,
   `    sys.exit(${LINEAGE_UNAVAILABLE_EXIT_CODE})`,
@@ -110,7 +132,10 @@ export function buildLineagePayload(opts: LineageRunOptions, resultFile: string)
   };
 }
 
-function mapLineageExitCode(exitCode: number, stderr: string): SfError | undefined {
+function mapLineageExitCode(exitCode: number, stderr: string, timeoutMs: number): SfError | undefined {
+  if (exitCode === LINEAGE_TERMINATED_EXIT_CODE && stderr.includes(LINEAGE_TERMINATED_MARKER)) {
+    return mapRunTerminated('SIGTERM', timeoutMs);
+  }
   if (exitCode === LINEAGE_UNAVAILABLE_EXIT_CODE && stderr.includes(LINEAGE_UNAVAILABLE_MARKER)) {
     return new SfError(
       messages.getMessage('error.sdkTooOld'),
@@ -139,7 +164,7 @@ export async function generateLineage(opts: LineageRunOptions, deps?: PythonRunn
         timeoutMs: opts.timeoutMs,
         onStdout: opts.onStdout,
         onStderr: opts.onStderr,
-        mapExitCode: mapLineageExitCode,
+        mapExitCode: (exitCode, stderr) => mapLineageExitCode(exitCode, stderr, opts.timeoutMs ?? RUN_TIMEOUT_MS),
       },
       deps
     );
@@ -156,7 +181,12 @@ export async function generateLineage(opts: LineageRunOptions, deps?: PythonRunn
     }
     return parseLineageReport(raw);
   } finally {
-    await fs.rm(tempDir, { recursive: true, force: true });
+    // A file another program briefly holds open (e.g. antivirus on Windows) must not hide the result.
+    try {
+      await fs.rm(tempDir, { recursive: true, force: true });
+    } catch (err) {
+      debug('temp dir cleanup error (ignored): %o', err);
+    }
   }
 }
 

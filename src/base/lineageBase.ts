@@ -87,7 +87,20 @@ export abstract class LineageBase extends SfCommand<LineageGenerateResult> {
         throw new SfError(messages.getMessage('error.functionPackage', [flags.entrypoint]), 'LineageFunctionPackage');
       }
       // Read config.json up front so a missing or malformed file fails before the run.
-      await readConfigJson(configPath);
+      const initialConfig = await readConfigJson(configPath);
+      if (initialConfig.streamingSource) {
+        throw new SfError(messages.getMessage('error.streamingPackage', [flags.entrypoint]), 'LineageStreamingPackage');
+      }
+      // Fail before the run on everything that would only refuse the write afterwards.
+      if (!flags['dry-run']) {
+        this.checkNonInteractiveWrite(messages, flags, hasLineageSection(initialConfig));
+        await fs.access(configPath, fsConstants.W_OK).catch((err: Error) => {
+          throw new SfError(
+            messages.getMessage('error.configUnwritable', [configPath, err.message]),
+            'LineageConfigUnwritable'
+          );
+        });
+      }
 
       const outputFile = flags['output-file'] ? path.resolve(flags['output-file']) : undefined;
       if (outputFile) {
@@ -112,7 +125,7 @@ export abstract class LineageBase extends SfCommand<LineageGenerateResult> {
           );
         }
         // Fail before the run rather than lose its result to a bad path afterwards.
-        await fs.access(path.dirname(outputFile), fsConstants.W_OK).catch((err: Error) => {
+        await checkOutputFileWritable(outputFile).catch((err: Error) => {
           throw new SfError(
             messages.getMessage('error.outputFileUnwritable', [outputFile, err.message]),
             'LineageOutputFileUnwritable'
@@ -179,7 +192,12 @@ export abstract class LineageBase extends SfCommand<LineageGenerateResult> {
       };
 
       if (entries.length === 0) {
-        this.warn(messages.getMessage('warning.emptyResult'));
+        // Existing entries still ship at deploy; say so rather than imply the no-lineage path.
+        this.warn(
+          current.length > 0
+            ? messages.getMessage('warning.emptyResultExisting', [current.length, configPath])
+            : messages.getMessage('warning.emptyResult')
+        );
         return result;
       }
 
@@ -233,6 +251,12 @@ export abstract class LineageBase extends SfCommand<LineageGenerateResult> {
         diff.changed.length,
       ])
     );
+    if (diff.removed.length > 0) {
+      this.log(messages.getMessage('info.removed', [bullets(diff.removed)]));
+    }
+    if (diff.changed.length > 0) {
+      this.log(messages.getMessage('info.changed', [bullets(diff.changed)]));
+    }
     if (lineage.noSources.length > 0) {
       this.log(messages.getMessage('info.noSources', [lineage.noSources.length, bullets(lineage.noSources)]));
     }
@@ -277,11 +301,34 @@ export abstract class LineageBase extends SfCommand<LineageGenerateResult> {
       );
     }
     const prompt = needsOwnership
-      ? replacing
+      ? needsReplace
         ? 'prompt.acceptOwnershipReplace'
         : 'prompt.acceptOwnership'
       : 'prompt.replace';
     return this.confirm({ message: messages.getMessage(prompt), defaultAnswer: false, ms: LINEAGE_CONFIRM_TIMEOUT_MS });
+  }
+
+  /**
+   * Without a prompt to fall back on, a write needs its flags up front: fail before the run
+   * instead of after it. `--dry-run` is the way to check lineage without writing.
+   * confirmWrite repeats these checks in case config.json gains a dataLineage section during the run.
+   */
+  private checkNonInteractiveWrite(messages: Messages<string>, flags: BaseLineageFlags, replacing: boolean): void {
+    if (!this.jsonEnabled() && process.stdin.isTTY) return;
+    if (!flags['accept-lineage-ownership']) {
+      throw new SfError(
+        messages.getMessage('error.ownershipNotAccepted'),
+        'LineageOwnershipNotAccepted',
+        messages.getMessages('actions.ownershipNotAccepted')
+      );
+    }
+    if (replacing && !flags['no-prompt']) {
+      throw new SfError(
+        messages.getMessage('error.replaceNotConfirmed'),
+        'LineageReplaceNotConfirmed',
+        messages.getMessages('actions.replaceNotConfirmed')
+      );
+    }
   }
 
   protected abstract getCodeType(): 'script';
@@ -354,6 +401,20 @@ async function realPath(file: string, hops = 0): Promise<string> {
       return path.resolve(file);
     }
   }
+}
+
+/**
+ * Rejects an --output-file that `fs.writeFile` would fail on: an existing target must be a
+ * writable regular file, and a new one needs a writable parent directory.
+ */
+async function checkOutputFileWritable(outputFile: string): Promise<void> {
+  const stat = await statOrUndefined(outputFile);
+  if (stat === undefined) {
+    await fs.access(path.dirname(outputFile), fsConstants.W_OK);
+    return;
+  }
+  if (!stat.isFile()) throw new Error('not a regular file');
+  await fs.access(outputFile, fsConstants.W_OK);
 }
 
 function bullets(lines: string[]): string {

@@ -133,7 +133,7 @@ describe('data-code-extension script lineage generate', () => {
     expect(config.dataLineage).to.deep.equal(REPORT.dataLineage);
     expect(config.permissions).to.deep.equal(PERMISSIONS);
     expect(config.entryPoint).to.equal('entrypoint.py');
-    expect(fs.readFileSync(configPath, 'utf8').endsWith('}\n')).to.be.true;
+    expect(fs.readFileSync(configPath, 'utf8')).to.equal(JSON.stringify(config, null, 2));
 
     expect(result.written).to.equal(true);
     expect(result.entryCount).to.equal(2);
@@ -177,6 +177,72 @@ describe('data-code-extension script lineage generate', () => {
     expect(warnings().some((w) => w.includes('No lineage could be generated'))).to.be.true;
   });
 
+  it('warns that existing lineage still ships when the result is empty', async () => {
+    const existing = [{ targetField: 'out__dll.old', sourceFields: ['in__dll.old'] }];
+    writeConfig({ dataspace: 'default', permissions: PERMISSIONS, dataLineage: existing });
+    generateStub.resolves({ ...REPORT, dataLineage: [], pairCount: 0 });
+    const result = await LineageGenerate.run(baseArgs());
+    expect(result.written).to.equal(false);
+    expect(readConfig().dataLineage).to.deep.equal(existing);
+    const warning = warnings().find((w) => w.includes('No lineage could be generated'));
+    expect(warning).to.include('existing 1 dataLineage entries still apply');
+    expect(warning).to.not.include('no-lineage path');
+  });
+
+  it('lists the entries that replacing drops or changes', async () => {
+    writeConfig({
+      dataspace: 'default',
+      permissions: PERMISSIONS,
+      dataLineage: [
+        { targetField: 'out__dll.old', sourceFields: ['in__dll.old'] },
+        { targetField: 'out__dll.id__c', sourceFields: ['in__dll.other'] },
+      ],
+    });
+    await LineageGenerate.run([...baseArgs(), '--dry-run']);
+    const logged = sfCommandStubs.log
+      .getCalls()
+      .map((call) => String(call.args[0]))
+      .join('\n');
+    expect(logged).to.match(/drops:\n {2}- out__dll\.old/);
+    expect(logged).to.match(/changes:\n {2}- out__dll\.id__c/);
+  });
+
+  it('rejects streaming scripts before the run', async () => {
+    writeConfig({ dataspace: 'default', permissions: PERMISSIONS, streamingSource: { name: 'in__dll' } });
+    try {
+      await LineageGenerate.run(baseArgs());
+      expect.fail('Should have thrown');
+    } catch (error) {
+      expect((error as SfError).name).to.equal('LineageStreamingPackage');
+    }
+    expect(generateStub.called).to.be.false;
+  });
+
+  it('rejects a read-only config.json before the run', async function () {
+    if (process.platform === 'win32' || process.getuid?.() === 0) this.skip();
+    fs.chmodSync(configPath, 0o444);
+    try {
+      await LineageGenerate.run([...baseArgs(), '--accept-lineage-ownership']);
+      expect.fail('Should have thrown');
+    } catch (error) {
+      expect((error as SfError).name).to.equal('LineageConfigUnwritable');
+    } finally {
+      fs.chmodSync(configPath, 0o644);
+    }
+    expect(generateStub.called).to.be.false;
+  });
+
+  it('--dry-run does not need a writable config.json', async function () {
+    if (process.platform === 'win32' || process.getuid?.() === 0) this.skip();
+    fs.chmodSync(configPath, 0o444);
+    try {
+      const result = await LineageGenerate.run([...baseArgs(), '--dry-run']);
+      expect(result.written).to.equal(false);
+    } finally {
+      fs.chmodSync(configPath, 0o644);
+    }
+  });
+
   it('--dry-run never writes or prompts', async () => {
     writeConfig({
       dataspace: 'default',
@@ -208,6 +274,37 @@ describe('data-code-extension script lineage generate', () => {
       expect.fail('Should have thrown');
     } catch (error) {
       expect((error as SfError).name).to.equal('LineageOutputFileUnwritable');
+    }
+    expect(generateStub.called).to.be.false;
+  });
+
+  it('rejects an --output-file that is a directory before the run', async () => {
+    const outputDir = fs.mkdtempSync(path.join(os.tmpdir(), 'test-lineage-out-'));
+    try {
+      await LineageGenerate.run([...baseArgs(), '--dry-run', '--output-file', outputDir]);
+      expect.fail('Should have thrown');
+    } catch (error) {
+      expect((error as SfError).name).to.equal('LineageOutputFileUnwritable');
+      expect((error as SfError).message).to.include('not a regular file');
+    } finally {
+      fs.rmSync(outputDir, { recursive: true, force: true });
+    }
+    expect(generateStub.called).to.be.false;
+  });
+
+  it('rejects a read-only existing --output-file before the run', async function () {
+    if (process.platform === 'win32' || process.getuid?.() === 0) this.skip();
+    const outputDir = fs.mkdtempSync(path.join(os.tmpdir(), 'test-lineage-out-'));
+    const outputFile = path.join(outputDir, 'lineage-result.json');
+    fs.writeFileSync(outputFile, '{}');
+    fs.chmodSync(outputFile, 0o444);
+    try {
+      await LineageGenerate.run([...baseArgs(), '--dry-run', '--output-file', outputFile]);
+      expect.fail('Should have thrown');
+    } catch (error) {
+      expect((error as SfError).name).to.equal('LineageOutputFileUnwritable');
+    } finally {
+      fs.rmSync(outputDir, { recursive: true, force: true });
     }
     expect(generateStub.called).to.be.false;
   });
@@ -411,8 +508,22 @@ describe('data-code-extension script lineage generate', () => {
       } catch (error) {
         expect((error as SfError).name).to.equal('LineageOwnershipNotAccepted');
       }
+      expect(generateStub.called).to.be.false;
       expect(confirmStub.called).to.be.false;
       expect(readConfig()).to.not.have.property('dataLineage');
+    });
+
+    it('fails before the run even when the result would be empty', async () => {
+      process.stdin.isTTY = false;
+      generateStub.resolves({ ...REPORT, dataLineage: [], pairCount: 0 });
+      try {
+        await LineageGenerate.run(baseArgs());
+        expect.fail('Should have thrown');
+      } catch (error) {
+        expect((error as SfError).name).to.equal('LineageOwnershipNotAccepted');
+        expect((error as SfError).actions?.join(' ')).to.include('--dry-run');
+      }
+      expect(generateStub.called).to.be.false;
     });
 
     it('fails with --json without --accept-lineage-ownership', async () => {
@@ -422,6 +533,7 @@ describe('data-code-extension script lineage generate', () => {
       } catch (error) {
         expect((error as SfError).name).to.equal('LineageOwnershipNotAccepted');
       }
+      expect(generateStub.called).to.be.false;
       expect(readConfig()).to.not.have.property('dataLineage');
     });
 
@@ -471,6 +583,12 @@ describe('data-code-extension script lineage generate', () => {
       );
     });
 
+    it('--no-prompt alone asks only to accept ownership', async () => {
+      await LineageGenerate.run([...baseArgs(), '--no-prompt']);
+      expect(confirmStub.calledOnce).to.be.true;
+      expect(confirmStub.firstCall.args[0]).to.have.property('message', 'Accept and write dataLineage to config.json?');
+    });
+
     it('--accept-lineage-ownership --no-prompt replaces without asking', async () => {
       const result = await LineageGenerate.run([...baseArgs(), '--accept-lineage-ownership', '--no-prompt']);
       expect(confirmStub.called).to.be.false;
@@ -514,6 +632,7 @@ describe('data-code-extension script lineage generate', () => {
       } catch (error) {
         expect((error as SfError).name).to.equal('LineageReplaceNotConfirmed');
       }
+      expect(generateStub.called).to.be.false;
       expect(confirmStub.called).to.be.false;
       expect(readConfig().dataLineage).to.deep.equal(OLD);
     });
@@ -525,6 +644,7 @@ describe('data-code-extension script lineage generate', () => {
       } catch (error) {
         expect((error as SfError).name).to.equal('LineageReplaceNotConfirmed');
       }
+      expect(generateStub.called).to.be.false;
       expect(readConfig().dataLineage).to.deep.equal(OLD);
     });
 
