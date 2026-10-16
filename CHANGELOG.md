@@ -1,3 +1,19 @@
+# [1.6.0](https://github.com/salesforcecli/plugin-data-code-extension/compare/1.5.0...1.6.0) (2026-10-16)
+
+### Bug Fixes
+
+- address review findings on lineage generate and scan ([11282a3](https://github.com/salesforcecli/plugin-data-code-extension/commit/11282a3f54839883a59c63f384c650be7400c850))
+- address various PR concerns and comments ([8269aeb](https://github.com/salesforcecli/plugin-data-code-extension/commit/8269aeb4310243a8b5da968f2f866182a7860982))
+- failing windows unit test ([7afa713](https://github.com/salesforcecli/plugin-data-code-extension/commit/7afa713e3eaf6898db02b27fc719bc253acf5c94))
+- guard scan writes and build-file outputs, fix Windows mount parsing in tests ([01de939](https://github.com/salesforcecli/plugin-data-code-extension/commit/01de939fffff2ccb267c380c68cefe8f17f906b5))
+- protect missing package inputs from --output-file by path ([4efd635](https://github.com/salesforcecli/plugin-data-code-extension/commit/4efd63568f06f47f91de3ff3ed03fb1efa51087d))
+
+### Features
+
+- addressing LLM complaints ([8f5caa5](https://github.com/salesforcecli/plugin-data-code-extension/commit/8f5caa5f65fc82da72e81938143929b38b768961))
+- customer warning 10 mins, UDF warning ([9783a65](https://github.com/salesforcecli/plugin-data-code-extension/commit/9783a65e0a1823df5936f64e06517d65bc479bc4))
+- initial attempt at lineage ([ae3403a](https://github.com/salesforcecli/plugin-data-code-extension/commit/ae3403a85378588205af43455706504623210480))
+
 # [1.5.0](https://github.com/salesforcecli/plugin-data-code-extension/compare/1.4.1...1.5.0) (2026-10-07)
 
 ### Features

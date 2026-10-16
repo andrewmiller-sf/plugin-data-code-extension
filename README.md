@@ -156,7 +156,7 @@ FLAG DESCRIPTIONS
     Reserved for future use.
 ```
 
-_See code: [src/commands/data-code-extension/function/deploy.ts](https://github.com/salesforcecli/plugin-data-code-extension/blob/1.5.0/src/commands/data-code-extension/function/deploy.ts)_
+_See code: [src/commands/data-code-extension/function/deploy.ts](https://github.com/salesforcecli/plugin-data-code-extension/blob/1.6.0/src/commands/data-code-extension/function/deploy.ts)_
 
 ## `sf data-code-extension function init`
 
@@ -196,7 +196,7 @@ FLAG DESCRIPTIONS
     used by default if not specified.
 ```
 
-_See code: [src/commands/data-code-extension/function/init.ts](https://github.com/salesforcecli/plugin-data-code-extension/blob/1.5.0/src/commands/data-code-extension/function/init.ts)_
+_See code: [src/commands/data-code-extension/function/init.ts](https://github.com/salesforcecli/plugin-data-code-extension/blob/1.6.0/src/commands/data-code-extension/function/init.ts)_
 
 ## `sf data-code-extension function run`
 
@@ -211,7 +211,7 @@ FLAGS
   -e, --entrypoint=<value>    (required) Entrypoint file for the package to run.
   -t, --test-with=<value>     (required) Path to test.json file to test Data Code Extension function
       --config-file=<value>   Path to a config file.
-      --dependencies=<value>  Dependencies override for the run.
+      --dependencies=<value>  Modules to import before the run.
       --target-org=<value>    Target Salesforce org to run against.
 
 GLOBAL FLAGS
@@ -253,10 +253,11 @@ FLAG DESCRIPTIONS
     Optional path to a JSON config file that provides input payload for the run. Defaults to the package's
     payload/config.json if not specified.
 
-  --dependencies=<value>  Dependencies override for the run.
+  --dependencies=<value>  Modules to import before the run.
 
-    Optional comma-separated list of Python package dependencies to use during the run, overriding those defined in the
-    package's requirements.txt.
+    Optional comma-separated list of Python modules (or module.attribute) to import before the entrypoint runs. Use
+    import names, such as 'yaml' rather than 'pyyaml'. Nothing is installed: each module must already be installed in
+    the active Python environment.
 
   --target-org=<value>  Target Salesforce org to run against.
 
@@ -264,7 +265,7 @@ FLAG DESCRIPTIONS
     The org must have Data Cloud enabled and appropriate permissions.
 ```
 
-_See code: [src/commands/data-code-extension/function/run.ts](https://github.com/salesforcecli/plugin-data-code-extension/blob/1.5.0/src/commands/data-code-extension/function/run.ts)_
+_See code: [src/commands/data-code-extension/function/run.ts](https://github.com/salesforcecli/plugin-data-code-extension/blob/1.6.0/src/commands/data-code-extension/function/run.ts)_
 
 ## `sf data-code-extension function scan`
 
@@ -325,7 +326,7 @@ FLAG DESCRIPTIONS
     Useful for testing different configurations without modifying the package's primary config.json.
 ```
 
-_See code: [src/commands/data-code-extension/function/scan.ts](https://github.com/salesforcecli/plugin-data-code-extension/blob/1.5.0/src/commands/data-code-extension/function/scan.ts)_
+_See code: [src/commands/data-code-extension/function/scan.ts](https://github.com/salesforcecli/plugin-data-code-extension/blob/1.6.0/src/commands/data-code-extension/function/scan.ts)_
 
 ## `sf data-code-extension function zip`
 
@@ -365,7 +366,7 @@ FLAG DESCRIPTIONS
     contain a valid package structure with config.json.
 ```
 
-_See code: [src/commands/data-code-extension/function/zip.ts](https://github.com/salesforcecli/plugin-data-code-extension/blob/1.5.0/src/commands/data-code-extension/function/zip.ts)_
+_See code: [src/commands/data-code-extension/function/zip.ts](https://github.com/salesforcecli/plugin-data-code-extension/blob/1.6.0/src/commands/data-code-extension/function/zip.ts)_
 
 ## `sf data-code-extension script deploy`
 
@@ -443,7 +444,7 @@ FLAG DESCRIPTIONS
     Reserved for future use.
 ```
 
-_See code: [src/commands/data-code-extension/script/deploy.ts](https://github.com/salesforcecli/plugin-data-code-extension/blob/1.5.0/src/commands/data-code-extension/script/deploy.ts)_
+_See code: [src/commands/data-code-extension/script/deploy.ts](https://github.com/salesforcecli/plugin-data-code-extension/blob/1.6.0/src/commands/data-code-extension/script/deploy.ts)_
 
 ## `sf data-code-extension script init`
 
@@ -482,7 +483,7 @@ FLAG DESCRIPTIONS
     StreamingTransform (a streaming data transform over a DLO/DMO change feed). Defaults to BatchTransform.
 ```
 
-_See code: [src/commands/data-code-extension/script/init.ts](https://github.com/salesforcecli/plugin-data-code-extension/blob/1.5.0/src/commands/data-code-extension/script/init.ts)_
+_See code: [src/commands/data-code-extension/script/init.ts](https://github.com/salesforcecli/plugin-data-code-extension/blob/1.6.0/src/commands/data-code-extension/script/init.ts)_
 
 ## `sf data-code-extension script run`
 
@@ -497,7 +498,7 @@ FLAGS
   -e, --entrypoint=<value>    (required) Entrypoint file for the package to run.
   -o, --target-org=<value>    (required) Target Salesforce org to run against.
       --config-file=<value>   Path to a config file.
-      --dependencies=<value>  Dependencies override for the run.
+      --dependencies=<value>  Modules to import before the run.
 
 GLOBAL FLAGS
   --flags-dir=<value>  Import flag values from a directory.
@@ -533,13 +534,14 @@ FLAG DESCRIPTIONS
     Optional path to a JSON config file that provides input payload for the run. Defaults to the package's
     payload/config.json if not specified.
 
-  --dependencies=<value>  Dependencies override for the run.
+  --dependencies=<value>  Modules to import before the run.
 
-    Optional comma-separated list of Python package dependencies to use during the run, overriding those defined in the
-    package's requirements.txt.
+    Optional comma-separated list of Python modules (or module.attribute) to import before the entrypoint runs. Use
+    import names, such as 'yaml' rather than 'pyyaml'. Nothing is installed: each module must already be installed in
+    the active Python environment.
 ```
 
-_See code: [src/commands/data-code-extension/script/run.ts](https://github.com/salesforcecli/plugin-data-code-extension/blob/1.5.0/src/commands/data-code-extension/script/run.ts)_
+_See code: [src/commands/data-code-extension/script/run.ts](https://github.com/salesforcecli/plugin-data-code-extension/blob/1.6.0/src/commands/data-code-extension/script/run.ts)_
 
 ## `sf data-code-extension script scan`
 
@@ -599,7 +601,7 @@ FLAG DESCRIPTIONS
     Useful for testing different configurations without modifying the package's primary config.json.
 ```
 
-_See code: [src/commands/data-code-extension/script/scan.ts](https://github.com/salesforcecli/plugin-data-code-extension/blob/1.5.0/src/commands/data-code-extension/script/scan.ts)_
+_See code: [src/commands/data-code-extension/script/scan.ts](https://github.com/salesforcecli/plugin-data-code-extension/blob/1.6.0/src/commands/data-code-extension/script/scan.ts)_
 
 ## `sf data-code-extension script zip`
 
@@ -639,6 +641,6 @@ FLAG DESCRIPTIONS
     contain a valid package structure with config.json.
 ```
 
-_See code: [src/commands/data-code-extension/script/zip.ts](https://github.com/salesforcecli/plugin-data-code-extension/blob/1.5.0/src/commands/data-code-extension/script/zip.ts)_
+_See code: [src/commands/data-code-extension/script/zip.ts](https://github.com/salesforcecli/plugin-data-code-extension/blob/1.6.0/src/commands/data-code-extension/script/zip.ts)_
 
 <!-- commandsstop -->
