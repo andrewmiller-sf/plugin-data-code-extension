@@ -203,8 +203,8 @@ describe('data-code-extension script lineage generate', () => {
       .getCalls()
       .map((call) => String(call.args[0]))
       .join('\n');
-    expect(logged).to.match(/drops:\n {2}- out__dll\.old/);
-    expect(logged).to.match(/changes:\n {2}- out__dll\.id__c/);
+    expect(logged).to.match(/drops:\r?\n {2}- out__dll\.old/);
+    expect(logged).to.match(/changes:\r?\n {2}- out__dll\.id__c/);
   });
 
   it('rejects streaming scripts before the run', async () => {
