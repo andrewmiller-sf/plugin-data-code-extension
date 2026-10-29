@@ -241,28 +241,7 @@ describe('zipBuilder.createZip symlinks and permissions', () => {
     rmSync(tempDir, { recursive: true, force: true });
   });
 
-  it('includes file symlinks (reading their target contents) like Python os.walk', async function () {
-    if (process.platform === 'win32') {
-      this.skip();
-      return;
-    }
-    const payload = path.join(tempDir, 'payload');
-    mkdirSync(payload);
-    const targetPath = path.join(tempDir, 'real_target.py');
-    writeFileSync(targetPath, 'hello-from-target');
-    symlinkSync(targetPath, path.join(payload, 'link.py'));
-
-    const result = await createZip('payload');
-    expect(result.fileCount).to.equal(1);
-
-    const buf = new Uint8Array(readFileSync(ZIP_FILE_NAME));
-    const unzipped = await JSZip.loadAsync(buf);
-    expect(Object.keys(unzipped.files)).to.deep.equal(['link.py']);
-    const content = await unzipped.files['link.py'].async('string');
-    expect(content).to.equal('hello-from-target');
-  });
-
-  it('skips broken symlinks rather than failing the whole zip', async function () {
+  it('skips a file symlink without packaging its contents', async function () {
     if (process.platform === 'win32') {
       this.skip();
       return;
@@ -270,7 +249,28 @@ describe('zipBuilder.createZip symlinks and permissions', () => {
     const payload = path.join(tempDir, 'payload');
     mkdirSync(payload);
     writeFileSync(path.join(payload, 'real.py'), 'real');
-    symlinkSync('/nonexistent/path', path.join(payload, 'broken.py'));
+    writeFileSync(path.join(tempDir, 'outside.py'), 'outside');
+    symlinkSync(path.join(tempDir, 'outside.py'), path.join(payload, 'linked.py'));
+
+    const result = await createZip('payload');
+    expect(result.fileCount).to.equal(1);
+    const buf = new Uint8Array(readFileSync(ZIP_FILE_NAME));
+    const unzipped = await JSZip.loadAsync(buf);
+    expect(Object.keys(unzipped.files)).to.deep.equal(['real.py']);
+  });
+
+  it('skips a directory symlink without packaging its contents', async function () {
+    if (process.platform === 'win32') {
+      this.skip();
+      return;
+    }
+    const payload = path.join(tempDir, 'payload');
+    mkdirSync(payload);
+    writeFileSync(path.join(payload, 'real.py'), 'real');
+    const shared = path.join(tempDir, 'shared');
+    mkdirSync(shared);
+    writeFileSync(path.join(shared, 'helper.py'), 'helper');
+    symlinkSync(shared, path.join(payload, 'linked_dir'));
 
     const result = await createZip('payload');
     expect(result.fileCount).to.equal(1);

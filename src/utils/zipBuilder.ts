@@ -243,19 +243,19 @@ export async function prepareDependencyArchive(
   }
 }
 
-async function collectFiles(directory: string): Promise<string[]> {
-  // Match Python `os.walk(path)` (default `followlinks=False`) + `zipfile.write`:
+async function collectFiles(directory: string, log: (message: string) => void): Promise<string[]> {
+  // - Symlinks (file, directory or dangling) are logged and skipped, never followed.
   // - Files in EXCLUDED_FILENAMES (.DS_Store, external_callout_config.json) are skipped.
   // - Real subdirectories are recursed.
-  // - Directory symlinks are NOT recursed (Python `is_dir(follow_symlinks=False)` is False).
-  // - Regular files and file symlinks are both included; their contents are read
-  //   through the symlink so the archive stores a regular-file entry (matching
-  //   the SDK's existing server-side unzip handling).
   async function walk(current: string): Promise<string[]> {
     const entries = await readdir(current, { withFileTypes: true });
     const nested = await Promise.all(
       entries.map(async (entry) => {
         const full = path.join(current, entry.name);
+        if (entry.isSymbolicLink()) {
+          log(`Skipping symlink file ${path.relative(directory, full)}`);
+          return [];
+        }
         if (EXCLUDED_FILENAMES.has(entry.name)) {
           return [];
         }
@@ -264,19 +264,6 @@ async function collectFiles(directory: string): Promise<string[]> {
         }
         if (entry.isFile()) {
           return [full];
-        }
-        if (entry.isSymbolicLink()) {
-          // Resolve the symlink target. Skip dangling links and links that
-          // point at directories (Python's default os.walk would treat those
-          // as files and the subsequent open() would fail).
-          try {
-            const targetStat = await stat(full);
-            if (targetStat.isFile()) {
-              return [full];
-            }
-          } catch {
-            return [];
-          }
         }
         return [];
       })
@@ -288,14 +275,17 @@ async function collectFiles(directory: string): Promise<string[]> {
 
 /**
  * Creates `deployment.zip` (DEFLATE-compressed) at the current working
- * directory containing every file under `directory` except those in
- * EXCLUDED_FILENAMES (`.DS_Store` and the local `external_callout_config.json`).
+ * directory containing every file under `directory` except symlinks and
+ * those in EXCLUDED_FILENAMES (`.DS_Store` and the local `external_callout_config.json`).
  * Archive entry names are relative to `directory`, matching the Python
  * `os.path.relpath(abs_path, directory)` behavior.
  */
-export async function createZip(directory: string): Promise<ZipResult> {
+export async function createZip(
+  directory: string,
+  log: (message: string) => void = (): void => {}
+): Promise<ZipResult> {
   const archive = new JSZip();
-  const files = await collectFiles(directory);
+  const files = await collectFiles(directory, log);
 
   const entries = await Promise.all(
     files.map(async (absPath) => {
@@ -303,7 +293,6 @@ export async function createZip(directory: string): Promise<ZipResult> {
       // Use forward slashes inside the zip so the archive is portable across
       // platforms (Python's zipfile follows the same convention).
       const portableName = arcname.split(path.sep).join('/');
-      // stat (not lstat) so symlinked files report the target's permissions.
       const [data, entryStat] = await Promise.all([readFile(absPath), stat(absPath)]);
       return {
         portableName,
@@ -372,7 +361,7 @@ export async function zip(
   }
 
   debug('zipping directory %s', directory);
-  const result = await createZip(directory);
+  const result = await createZip(directory, log);
   debug('created zip at %s (%d files, %d bytes)', result.archivePath, result.fileCount, result.archiveSizeBytes);
   return result;
 }
